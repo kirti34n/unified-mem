@@ -5,7 +5,7 @@
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -67,5 +67,5 @@ try {
   const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
   const today = new Date().toISOString().slice(0, 10);
   top.forEach((n, i) => { inj.run(sessionId, n.id, 100 + i, n.score); touch.run(today, n.id); }); // rank 100+ = per-prompt injection
-} catch { /* memory must never block a prompt */ }
+} catch (e) { hookDebugLog('retrieve-prompt', e); /* memory must never block a prompt */ }
 process.exit(0);

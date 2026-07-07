@@ -225,6 +225,17 @@ export function makeDiff(path, before, after) {
 
 export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
 
+// Hooks swallow every error by design (memory must never block a session).
+// UNIFIED_MEM_DEBUG=1 is the escape hatch: failures land in hook-errors.jsonl.
+export function hookDebugLog(script, err) {
+  if (process.env.UNIFIED_MEM_DEBUG !== '1') return;
+  try {
+    mkdirSync(join(VAULT, 'index'), { recursive: true });
+    appendFileSync(join(VAULT, 'index', 'hook-errors.jsonl'),
+      JSON.stringify({ ts: new Date().toISOString(), script, err: String(err?.stack || err) }) + '\n');
+  } catch { }
+}
+
 export const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
 
 // Schema gate for reflector output (untrusted). Returns null if valid, else the reason.

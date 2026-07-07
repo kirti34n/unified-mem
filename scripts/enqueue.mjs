@@ -2,7 +2,7 @@
 // The Phase-1 worker drains queue/ → reflector → notes. Never blocks.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT } from './vault.mjs';
+import { VAULT, hookDebugLog } from './vault.mjs';
 
 try {
   // Internal headless calls (reflector, verify, judge, arbiter, eval) must never be
@@ -18,5 +18,5 @@ try {
     cwd: hook.cwd,
     ts: new Date().toISOString(),
   }, null, 2));
-} catch { /* never block */ }
+} catch (e) { hookDebugLog('enqueue', e); /* never block */ }
 process.exit(0);

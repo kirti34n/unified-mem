@@ -3,7 +3,7 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -71,5 +71,5 @@ try {
   const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,0)');
   const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
   used.forEach((n, i) => { inj.run(sessionId, n.id, i + 1, n.score); touch.run(ts.slice(0, 10), n.id); });
-} catch { /* memory must never block a session */ }
+} catch (e) { hookDebugLog('retrieve', e); /* memory must never block a session */ }
 process.exit(0);
