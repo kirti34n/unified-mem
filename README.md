@@ -21,7 +21,7 @@ Claude Code already remembers *within* a project. unified-mem unifies what it le
 
 **Contents:** [What is this?](#what-is-this-in-plain-words) · [Does it work?](#does-it-work) · [How it layers on built-ins](#how-it-layers-on-claude-codes-built-in-memory) · [Quickstart](#quickstart) · [Notes](#what-a-note-looks-like) · [Dashboard](#the-dashboard) · [Mechanisms](#how-it-works) · [Config](#config-reference) · [FAQ](#troubleshooting-and-faq) · [Research](#research-foundations) · [Roadmap](#roadmap)
 
-## What is this, in plain words?
+## <img src="docs/icons/info.svg" width="22" height="22"> What is this, in plain words?
 
 Claude Code is not amnesiac. It ships with [built-in memory](https://code.claude.com/docs/en/memory): each project gets an auto-memory directory that loads every session, `CLAUDE.md` files carry your instructions, and `--resume` continues past conversations. That layer works, and unified-mem does not replace it.
 
@@ -37,7 +37,7 @@ Everything is observable on a **live dashboard**: what got injected, which notes
 
 No databases to install, no npm packages, no cloud. Plain markdown files plus Node's built-in SQLite. The vault is a git repo you own.
 
-## Does it work?
+## <img src="docs/icons/flask.svg" width="22" height="22"> Does it work?
 
 Measured, not assumed. The bundled A/B harness runs the same questions through headless `claude -p` twice: arm A with memory, arm B without (and arm B is free to dig through the actual repositories). First real-history result from the author's vault, 7 questions drawn from real incidents across 6 repos, 2 runs, 14 samples per arm:
 
@@ -49,13 +49,13 @@ Measured, not assumed. The bundled A/B harness runs the same questions through h
 
 Three incidents were answerable only from memory. One control run spent 104 seconds searching a repo and still failed a question memory answered in 11. The negative probe confirms memory did not induce hallucinated confidence. Single-vault result, not a benchmark: run it on your own history with `node eval/run.mjs`.
 
-## The problem, precisely
+## <img src="docs/icons/target.svg" width="22" height="22"> The problem, precisely
 
 1. **Cross-repo blindness.** Built-in memory is per-repository by design. A fix discovered in `repo-A` gets re-discovered from scratch in `repo-B` and `repo-C`.
 2. **No learning loop.** Nothing built-in measures whether a remembered fact actually helps the work. Useful and useless memories are treated identically, forever.
 3. **No staleness handling.** Nothing notices when the code a memory describes has changed. Stale memory silently misleads, which is worse than no memory at all.
 
-## How it layers on Claude Code's built-in memory
+## <img src="docs/icons/layers.svg" width="22" height="22"> How it layers on Claude Code's built-in memory
 
 | Layer | Scope | Holds | Learns? | Staleness? |
 |---|---|---|---|---|
@@ -84,7 +84,7 @@ flowchart LR
     K --> A
 ```
 
-## Quickstart
+## <img src="docs/icons/zap.svg" width="22" height="22"> Quickstart
 
 **Prerequisites:** [Node.js](https://nodejs.org) 22.5 or newer (`node --version`; the built-in SQLite arrived in 22.5) and the [Claude Code CLI](https://code.claude.com). Zero npm installs.
 
@@ -161,7 +161,7 @@ Opt-in by design: MCP tool definitions cost tokens in every session, so only reg
 
 That is the whole install. Sessions now begin with the memory catalog and end by feeding the vault.
 
-## What a note looks like
+## <img src="docs/icons/file-text.svg" width="22" height="22"> What a note looks like
 
 One claim per note, at most 150 words, plain markdown with YAML frontmatter. The whole vault opens in [Obsidian](https://obsidian.md) if you like graphs. Example (from the demo seed):
 
@@ -187,36 +187,36 @@ links: ["[[2026-06-16-redis-lock-pattern]]"]
 
 The `files:` and `source_commit` provenance is not decoration. It is what lets the system later detect that the code a note describes has changed.
 
-## The dashboard
+## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
 
 Five views, each making one mechanism visible:
 
 <details>
-<summary><b>Sessions</b>: what was injected into each session, and the Q-delta each note earned from the outcome</summary>
+<summary><img src="docs/icons/list.svg" width="16" height="16"> <b>Sessions</b>: what was injected into each session, and the Q-delta each note earned from the outcome</summary>
 <br><img src="docs/screenshots/sessions.png" alt="Sessions view">
 </details>
 
 <details>
-<summary><b>Notes graph</b>: atomic notes linked through shared entities, sized by learned Q-value</summary>
+<summary><img src="docs/icons/share.svg" width="16" height="16"> <b>Notes graph</b>: atomic notes linked through shared entities, sized by learned Q-value</summary>
 <br><img src="docs/screenshots/graph.png" alt="Notes graph view">
 </details>
 
 <details>
-<summary><b>Q evolution</b>: usefulness being learned; rising lines help, sagging lines decay toward archive</summary>
+<summary><img src="docs/icons/trend.svg" width="16" height="16"> <b>Q evolution</b>: usefulness being learned; rising lines help, sagging lines decay toward archive</summary>
 <br><img src="docs/screenshots/q-evolution.png" alt="Q evolution view">
 </details>
 
 <details>
-<summary><b>Consolidation log</b>: every merge, edit, invalidation, and verification as an exact red/green diff</summary>
+<summary><img src="docs/icons/diff.svg" width="16" height="16"> <b>Consolidation log</b>: every merge, edit, invalidation, and verification as an exact red/green diff</summary>
 <br><img src="docs/screenshots/consolidation.png" alt="Consolidation view">
 </details>
 
 <details>
-<summary><b>Metrics</b>: stale-retrieval rate (target under 5%) and the vault size trend (healthy is a plateau; linear growth means forgetting is broken)</summary>
+<summary><img src="docs/icons/target.svg" width="16" height="16"> <b>Metrics</b>: stale-retrieval rate (target under 5%) and the vault size trend (healthy is a plateau; linear growth means forgetting is broken)</summary>
 <br><img src="docs/screenshots/metrics.png" alt="Metrics view">
 </details>
 
-## How it works
+## <img src="docs/icons/cpu.svg" width="22" height="22"> How it works
 
 <details>
 <summary><b>1. Retrieval: which notes get injected?</b></summary>
@@ -299,7 +299,7 @@ Research, hypothesis, implement, test, accept or revert, repeat. The loop hill-c
 `node scripts/backfill.mjs` queues your existing Claude Code session transcripts (from `~/.claude/projects/`) through the normal reflection pipeline, so the vault begins loaded with what you already learned. In this project's own backfill, 8 transcripts across 6 repos produced 27 notes: Windows encoding crashes, model-eviction thrash, CI gotchas, architectural decisions, even a user style preference that then correctly surfaced in every repo.
 </details>
 
-## Config reference
+## <img src="docs/icons/sliders.svg" width="22" height="22"> Config reference
 
 Copy `config.example.json` to `config.json`; defaults apply for anything omitted.
 
@@ -322,7 +322,7 @@ Copy `config.example.json` to `config.json`; defaults apply for anything omitted
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |
 | `repos` | `{}` | name-to-local-path map powering invalidation and repo cards |
 
-## Troubleshooting and FAQ
+## <img src="docs/icons/life-buoy.svg" width="22" height="22"> Troubleshooting and FAQ
 
 <details>
 <summary><b>Does this replace CLAUDE.md or auto-memory?</b></summary>
@@ -372,11 +372,11 @@ Defenses in order: transcripts are wrapped as data in the reflector prompt; refl
 Built and tested on Windows 11 (with Git Bash present). Hook commands use forward slashes and quoted absolute paths, which work across platforms. Task Scheduler one-liners are in the Quickstart.
 </details>
 
-## Research foundations
+## <img src="docs/icons/book-open.svg" width="22" height="22"> Research foundations
 
 The design rules are distilled from published work. **ACE**: evolving playbooks, context-collapse and brevity-bias failure modes, hence incremental note operations and never wholesale rewrites. **MemRL / TAME**: similarity-times-utility retrieval and contribution-weighted Q updates. **CODESKILL**: verifiable rewards beat judge-only scoring. **SCM / Letta**: sleep-time consolidation (about 30% redundancy by session ten without it). **SleepGate**: stale-retrieval rate as a first-class metric. **A-MEM**: atomic Zettelkasten-style linked notes beat raw chunks. **MemFail**: memory systems fail at the write step through over-compression and bad merges, hence the verbatim rule and the arbiter. **"Context Length Alone Hurts" (ACL 2025)**: even irrelevant filler degrades performance, hence the aggressive relevance floors and the inject-nothing default. **LongMemEval**: abstention ability as a first-class measure, hence negative probes. Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
 
-## Roadmap
+## <img src="docs/icons/map.svg" width="22" height="22"> Roadmap
 
 - [x] Cold-start catalog plus nightly repo cards: sessions start with a map, not a data dump
 - [x] Session-start injection with relevance floor, FTS5/BM25 retrieval, injection logging
@@ -398,6 +398,6 @@ The design rules are distilled from published work. **ACE**: evolving playbooks,
 - [ ] Utilization calibration: deferred. Citation telemetry plus a nightly sampled leave-one-out ablation through the existing harness (the accepted causal measure of whether injected notes changed behavior)
 - [ ] Embeddings and MMR: deliberately skipped. Measured evidence says BM25 wins on technical vocabulary at this corpus size and top-k redundancy is near zero with atomic deduped notes. Revisit only if logged retrieval misses accumulate.
 
-## License
+## <img src="docs/icons/shield.svg" width="22" height="22"> License
 
 [MIT](LICENSE)
