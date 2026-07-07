@@ -135,11 +135,15 @@ export function reindexNotes(db) {
       Number(note.access_count ?? 0), note.body ?? '', p);
     n++;
   }
-  // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers)
-  db.exec('DROP TABLE IF EXISTS notes_fts;');
-  db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
-  const ins = db.prepare('INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes');
-  ins.run();
+  // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers).
+  // Transactional: a concurrent hook read must never observe a missing notes_fts.
+  db.exec('BEGIN');
+  try {
+    db.exec('DROP TABLE IF EXISTS notes_fts;');
+    db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
+    db.prepare('INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes').run();
+    db.exec('COMMIT');
+  } catch (e) { try { db.exec('ROLLBACK'); } catch { } throw e; }
   return n;
 }
 
