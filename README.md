@@ -2,7 +2,7 @@
 
 # unified-mem
 
-**Claude Code remembers per project. unified-mem makes what it learns follow you everywhere: scored by real outcomes, retired when your code moves on.**
+**Claude Code remembers per project. unified-mem makes what it learns follow you across every repo: scored by real outcomes, invalidated when your code changes, observable on a live dashboard.**
 
 [![CI](https://github.com/kirti34n/unified-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kirti34n/unified-mem/actions/workflows/ci.yml)
 [![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-blue)](https://nodejs.org)
@@ -14,26 +14,81 @@
 
 </div>
 
-## The Tuesday problem
+**Contents:** [Problem](#the-problem) · [What we built](#what-we-built) · [How it helps](#how-it-helps-you) · [How it works](#how-it-works) · [Results](#measured-results) · [Dashboard](#the-dashboard) · [Install](#install) · [Comparison](#how-it-compares) · [Docs](#dig-deeper)
 
-Tuesday. You and Claude spend two hours in your API repo chasing intermittent 401 errors. Turns out parallel requests were racing on token refresh; a Redis lock fixes it. Great session.
+## <img src="docs/icons/target.svg" width="22" height="22"> The problem
 
-Thursday. Different repo, same class of bug. Claude has never heard of Tuesday. It re-explores, re-guesses, re-derives, and you pay for the same two hours again. Claude Code's built-in memory is good, but it is per project by design: what you learn in one repo is invisible in every other.
+Claude Code ships with good [built-in memory](https://code.claude.com/docs/en/memory): per-project auto-memory that loads each session, the CLAUDE.md instructions hierarchy, and `--resume` for continuing conversations. unified-mem does not replace any of that. It fixes the three things the built-in layer cannot do:
 
-unified-mem is the layer above: one vault of small markdown notes that every session, in every repo, writes to and reads from. And unlike a notebook, it keeps itself honest: notes earn a usefulness score from real outcomes, fade out when they stop helping, and get re-checked against your actual code when the files they describe change.
+1. **Cross-repo blindness.** Auto-memory is keyed to one repository. The race condition you and Claude spent two hours fixing in `api-core` is invisible tomorrow in `web-app`, so the same class of bug costs the same two hours again. Fixes, gotchas, conventions, and your personal preferences all stop at the repo boundary.
+2. **No learning loop.** Nothing measures whether a remembered fact actually helps. A note that saves a session and a note nobody ever benefits from are treated identically, forever. Memory that cannot rank itself eventually injects noise, and measured research shows irrelevant context actively degrades model performance.
+3. **No staleness handling.** Nothing notices when the code a memory describes gets rewritten. A remembered fix that no longer matches reality is worse than no memory at all: it gets applied with confidence.
 
-## What that means in practice
+## <img src="docs/icons/layers.svg" width="22" height="22"> What we built
 
-**You hit a bug someone (you) already solved.** You type "why are these 401s intermittent under load?" and before Claude starts exploring, the note from Tuesday is already in its context: root cause, the exact fix, the commit hash, the gotcha about lock TTLs. Answered in seconds instead of re-derived in hours. In our measured run, one control session dug through a repo for 104 seconds and still failed a question memory answered in 11.
+One vault of small markdown notes (one claim each, with commit and file provenance) that every Claude Code session, in every repo, writes to and reads from. Zero dependencies: plain Node builtins plus SQLite full-text search, and the vault is a git repo you own.
 
-**Your preferences stop needing repetition.** Say "remember that I prefer pnpm" once, in any session. From then on, every session in every repo starts knowing it. Same for your style guide: ingest it once and the right section surfaces exactly when a prompt touches its topic.
+| Piece | What it does |
+|---|---|
+| Three hooks | SessionStart injects a memory catalog, this repo's overview card, and pinned preferences; UserPromptSubmit injects notes matched to what you actually typed; SessionEnd queues the finished transcript |
+| Background worker | Distills each finished session into typed notes (exact error strings and versions preserved verbatim), then scores every injected note against the session's real outcome |
+| Nightly job | Decays unused notes, re-verifies notes whose cited files changed in git, arbitrates near-duplicates, auto-links the knowledge graph, rebuilds repo cards |
+| Personal layer | `vault_remember` (MCP tool or CLI) pins your preferences into every session; `ingest.mjs` chunks your own docs so they surface when a prompt touches them |
+| Live dashboard | Every injection, every score change, every consolidation as a red/green diff, plus cost and abstention telemetry |
+| Eval harness + tuner | An A/B harness measures memory against a no-memory control, and a guarded loop tunes retrieval settings only on statistically meaningful wins |
 
-**Stale advice retires itself.** That Redis lock note cites `src/auth/token.ts`. The nightly job notices when that file changes, flags the note for review, re-reads the current code, and either restores the note with fresh provenance or retires it. Outdated fixes are the worst failure mode of any memory system; here they become a visible review queue instead of confident misinformation.
+Where it sits relative to what you already have:
 
-**Silence is a feature.** Ask "hey can you fix this thing please" and nothing is injected, on purpose. Research is clear that irrelevant context makes models worse, so unified-mem injects nothing unless a note is genuinely relevant or has proven itself repeatedly. About half of all real sessions get zero notes, and the dashboard shows you that rate.
+| Layer | Scope | Holds | Learns? | Staleness? |
+|---|---|---|---|---|
+| [Session transcripts](https://code.claude.com/docs/en/sessions) (`--resume`) | one conversation | full history | no | no |
+| [CLAUDE.md hierarchy](https://code.claude.com/docs/en/memory) | user / project | your instructions | no | manual |
+| [Auto-memory](https://code.claude.com/docs/en/memory) | one repository | project facts | heuristic | none |
+| **unified-mem** | **all repositories** | durable, verified knowledge | **Q-value from outcomes** | **git-diff invalidation + re-verification** |
+
+## <img src="docs/icons/zap.svg" width="22" height="22"> How it helps you
+
+**Solved problems stay solved.** Type "why are these 401s intermittent under load?" and the note from the session that fixed it is in Claude's context before exploration starts: root cause, exact fix, commit hash, the gotcha about lock TTLs. In our measured run, a control session dug through the repo for 104 seconds and still failed a question memory answered in 11.
+
+**Say a preference once, keep it forever.** "Remember that I prefer pnpm" (mid-conversation via `vault_remember`, or `npm run remember` from a shell) pins that rule into every future session in every repo. Ingest your style guide once and the right section appears exactly when a prompt touches its topic.
+
+**Stale advice retires itself.** Every note cites the files it is about. When those files change, the nightly job flags the note, re-reads the current code with a cheap model, and either restores it with fresh provenance or retires it after two independent stale verdicts. Confident-but-outdated fixes become a visible review queue.
+
+**Useless notes disappear.** Notes earn usefulness from verifiable outcomes (tests passed, build green), judged by a pinned rubric against what the assistant actually did. Helpful notes rise and win more injections; notes that stop contributing decay 5% per idle week and are archived. The vault plateaus instead of growing forever.
+
+**Irrelevant prompts get silence.** "Hey can you fix this thing please" injects nothing, by design, behind frequency-aware relevance gates. Roughly half of real sessions receive zero notes, the dashboard shows that abstention rate, and prompts about topics the vault does not know are logged as gaps so you can see its blind spots.
+
+**Costs are capped, not hoped about.** Every pipeline LLM call goes through one budget-guarded path with a local cost ledger. Hard daily cap (default $5), cheap-model routing for small jobs, and internal calls can never trigger reflection of themselves.
+
+## <img src="docs/icons/cpu.svg" width="22" height="22"> How it works
+
+1. **Capture.** SessionEnd queues the transcript. The worker distills anything durable into a note: one claim, at most 150 words, typed (`recovery`, `strategy`, `optimization`, `decision`, `convention`), schema-gated, secret-scanned, provenance-stamped. Routine sessions produce zero notes, correctly.
+2. **Retrieve.** Every note is ranked by `0.40·similarity + 0.30·usefulness + 0.15·recency + 0.15·validity` (BM25 full text against your prompt and git context). Aggressive floors mean nothing rides along unless it is genuinely relevant or has repeatedly proven itself.
+3. **Learn.** On a verifiable outcome, each injected note's Q-value moves: `Q ← clamp(Q + α·c·(r − Q))`, where the contribution `c` comes from a pinned judge reading the assistant's own output. Guardrails: per-session delta cap, clamping, no update on ambiguous outcomes, a bare checkmark is not a success signal.
+4. **Maintain.** Nightly: git-diff invalidation, two-strike verification, duplicate arbitration (duplicate / update / coexisting), decay, archival, graph auto-linking, entity hubs, repo cards.
+5. **Measure.** The A/B harness proves value against a control with full repo access, and the improve loop tunes config only with 14+ samples and above-noise wins.
 
 <details>
-<summary><b>See exactly what a session receives</b> (click to expand)</summary>
+<summary><b><img src="docs/icons/share.svg" width="16" height="16"> The machinery diagram</b> (click to expand)</summary>
+
+```mermaid
+flowchart LR
+    subgraph session [Claude Code session, any repo]
+        A[SessionStart<br/>retrieve.mjs] -->|preferences + catalog<br/>+ repo card| B((session))
+        P[UserPromptSubmit<br/>retrieve-prompt.mjs] -->|just-in-time notes| B
+        B --> C[SessionEnd<br/>enqueue.mjs]
+    end
+    C -->|queue/| D[worker.mjs<br/>outcome scorer + judge + reflector]
+    D -->|new notes| V[(vault<br/>markdown + SQLite FTS5)]
+    V --> A
+    V --> P
+    N[consolidate.mjs<br/>nightly] -->|decay · verify ·<br/>arbiter · repo cards| V
+    E[eval/run.mjs] --> I[improve.mjs] -->|tunes| K[config.json] --> A
+```
+</details>
+
+<details>
+<summary><b><img src="docs/icons/file-text.svg" width="16" height="16"> Exactly what a session receives</b> (click to expand)</summary>
 
 At session start, a compact map instead of a data dump:
 
@@ -52,7 +107,7 @@ THIS REPO, what is there and what is happening:
 Vault knowledge (4 notes, by usefulness): ...
 ```
 
-Then, when you type a prompt that matches something the vault knows:
+When a prompt matches something the vault knows:
 
 ```
 Vault notes matching this prompt (verify against current code):
@@ -64,57 +119,43 @@ Vault notes matching this prompt (verify against current code):
 **Gotchas:** Lock TTL must exceed p99 refresh latency.
 ```
 
-Everything is factual voice with provenance, never instructions, and always labeled to verify against current code.
+Always factual voice with provenance, never instructions, always labeled to verify against current code. Full detail on all eight mechanisms: [docs/MECHANISMS.md](docs/MECHANISMS.md).
 </details>
 
-## Try it in 60 seconds
+## <img src="docs/icons/flask.svg" width="22" height="22"> Measured results
+
+Memory versus honest competition: the control arm had full access to the repositories and was free to re-derive every answer. Seven questions from real incidents across six repos, two runs each, pinned regex grading:
+
+| | Memory | Control (repo access, no memory) |
+|---|---|---|
+| Correct | **14/14 (100%)** | 8/14 (57%) |
+| Median latency | 11.9s | 12.1s |
+| "I don't know" honesty probe | passed | passed |
+
+Three incidents were answerable only from memory. The honesty probe matters: memory did not teach the model to fake confidence about things it never learned. Single vault, 14 samples per arm, so treat it as a demonstration; the harness ships in the box so you can measure your own history ([docs/EVAL.md](docs/EVAL.md)).
+
+## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
+
+Five live views at `localhost:7777`, one per mechanism:
+
+- <img src="docs/icons/list.svg" width="15" height="15"> **Sessions**: what each session received and the Q-delta each note earned from the outcome
+- <img src="docs/icons/share.svg" width="15" height="15"> **Notes graph**: atomic notes linked through shared entities, sized by learned usefulness
+- <img src="docs/icons/trend.svg" width="15" height="15"> **Q evolution**: usefulness being learned; rising lines help, sagging lines decay toward archive
+- <img src="docs/icons/diff.svg" width="15" height="15"> **Consolidation log**: every verification, decay, and merge as an exact red/green diff
+- <img src="docs/icons/database.svg" width="15" height="15"> **Metrics**: stale-retrieval rate, abstention rate, vault size trend, spend against the daily budget
+
+## <img src="docs/icons/info.svg" width="22" height="22"> Install
+
+**Try it first (60 seconds, nothing touches your setup):**
 
 ```bash
 git clone https://github.com/kirti34n/unified-mem && cd unified-mem
-node scripts/init.mjs   # your vault: its own git repo, separate from this checkout
+node scripts/init.mjs   # creates your vault: its own git repo, separate from this checkout
 node scripts/seed.mjs   # three weeks of demo history to explore
-node scripts/dashboard.mjs
+node scripts/dashboard.mjs   # then open http://localhost:7777
 ```
 
-Open http://localhost:7777 and click through five views: which notes each session received, usefulness scores visibly learning, staleness reviews as red/green diffs, spend against a daily budget, and the abstention rate. Zero npm installs; Node builtins only.
-
-## How it learns, in one minute
-
-A background worker reads each finished session and distills anything durable into a note: one claim, exact error strings and versions preserved verbatim, commit and file provenance attached. Routine sessions produce zero notes, and that is correct.
-
-Then reality grades the notes. When a session ends in a verifiable outcome (tests passed, build green), a pinned judge scores how much each injected note actually contributed, and its usefulness moves:
-
-```
-Q ← clamp(Q + α·c·(r − Q))        helpful notes rise toward 0.95
-                                  ignored notes decay 5% per idle week
-```
-
-Rise enough and a note wins more injections. Decay enough and it is archived. The vault plateaus instead of growing forever, and the whole loop runs on a hard daily budget (default $5) with every LLM call cost-ledgered.
-
-<details>
-<summary><b>The machinery diagram</b> (click to expand)</summary>
-
-```mermaid
-flowchart LR
-    subgraph session [Claude Code session, any repo]
-        A[SessionStart<br/>retrieve.mjs] -->|preferences + catalog<br/>+ repo card| B((session))
-        P[UserPromptSubmit<br/>retrieve-prompt.mjs] -->|just-in-time notes| B
-        B --> C[SessionEnd<br/>enqueue.mjs]
-    end
-    C -->|queue/| D[worker.mjs<br/>outcome scorer + judge + reflector]
-    D -->|new notes| V[(vault<br/>markdown + SQLite FTS5)]
-    V --> A
-    V --> P
-    N[consolidate.mjs<br/>nightly] -->|decay · verify ·<br/>arbiter · repo cards| V
-    E[eval/run.mjs] --> I[improve.mjs] -->|tunes| K[config.json] --> A
-```
-
-Retrieval ranks every note by `0.40·similarity + 0.30·usefulness + 0.15·recency + 0.15·validity`, BM25 full text against your prompt and git context, with aggressive relevance floors so nothing irrelevant rides along. Full detail on all eight mechanisms: [docs/MECHANISMS.md](docs/MECHANISMS.md).
-</details>
-
-## Make it yours
-
-Three hooks in `~/.claude/settings.json` attach it to every repo you have, and every repo you create later (merge into an existing `"hooks"` block, path where you cloned):
+**Attach it to your sessions.** Three hooks in `~/.claude/settings.json` cover every repo you have and every repo you create later (merge into an existing `"hooks"` block; use the path you cloned to):
 
 ```jsonc
 {
@@ -129,45 +170,33 @@ Three hooks in `~/.claude/settings.json` attach it to every repo you have, and e
 }
 ```
 
-Then turn on the learning loop and, the best part, import the sessions you already had. Your vault starts loaded with months of your own debugging instead of empty:
+**Turn on the learning loop, and import your history.** Backfill is the best part: your vault starts loaded with months of your own debugging instead of empty.
 
 ```bash
 node scripts/worker.mjs --watch      # distills finished sessions into notes
 node scripts/consolidate.mjs        # nightly upkeep (cron / Task Scheduler lines in the FAQ)
 node scripts/backfill.mjs           # mine your PAST session transcripts into notes
 node scripts/seed.mjs --purge-demo  # drop the demo data once real notes flow
-node scripts/remember.mjs "Prefer pnpm over npm everywhere"   # your first preference
+node scripts/remember.mjs "Prefer pnpm over npm everywhere"   # your first pinned preference
 ```
 
-Point the `repos` map in `config.json` at your local clones so staleness detection can watch your actual code ([docs/CONFIG.md](docs/CONFIG.md)).
+Point the `repos` map in `config.json` at your local clones so staleness detection can watch your actual code. Every knob (budgets, floors, models, caps) is documented in [docs/CONFIG.md](docs/CONFIG.md).
 
-## Prove it to yourself
-
-We measured memory against honest competition: a control arm with full access to the repositories, free to re-derive every answer. Seven questions from real incidents across six repos, two runs each:
-
-| | Memory | Control (repo access, no memory) |
-|---|---|---|
-| Correct | **14/14 (100%)** | 8/14 (57%) |
-| Median latency | 11.9s | 12.1s |
-| "I don't know" honesty probe | passed | passed |
-
-Three incidents were only answerable from memory. And the probe matters: memory did not teach the model to fake confidence about things it never learned. This is one vault and 14 samples per arm, a demonstration rather than a benchmark, which is why the harness ships in the box: build questions from your own incidents and run `node eval/run.mjs` ([docs/EVAL.md](docs/EVAL.md)).
-
-## Where it sits
+## <img src="docs/icons/life-buoy.svg" width="22" height="22"> How it compares
 
 | | scope | learns from outcomes | staleness handling |
 |---|---|---|---|
 | Claude Code [auto-memory](https://code.claude.com/docs/en/memory) | one repository | no | none |
 | [claude-mem](https://github.com/thedotmack/claude-mem) | per project | no | none |
 | [memsearch](https://milvus.io/blog/adding-persistent-memory-to-claude-code-with-the-lightweight-memsearch-plugin.md) | past-session search | no | none |
-| unified-mem | [all repositories](docs/MECHANISMS.md#the-layering-premise) | [yes, judged and decayed](docs/MECHANISMS.md#3-q-learning-how-usefulness-is-earned) | [git-diff invalidation + re-verification](docs/MECHANISMS.md#4-staleness-the-biggest-accuracy-lever) |
+| **unified-mem** | [all repositories](docs/MECHANISMS.md#the-layering-premise) | [judged and decayed](docs/MECHANISMS.md#3-q-learning-how-usefulness-is-earned) | [git-diff invalidation + re-verification](docs/MECHANISMS.md#4-staleness-the-biggest-accuracy-lever) |
 
-It layers on the built-ins rather than replacing them: instructions stay in CLAUDE.md, project working memory stays in auto-memory, and the reflector is explicitly told to leave project-local context alone.
+Factual and complementary: instructions stay in CLAUDE.md, project working memory stays in auto-memory, and the reflector is explicitly told to leave project-local context alone.
 
-## Dig deeper
+## <img src="docs/icons/book-open.svg" width="22" height="22"> Dig deeper
 
 [Mechanisms](docs/MECHANISMS.md) · [Config](docs/CONFIG.md) · [FAQ](docs/FAQ.md) · [Eval methodology](docs/EVAL.md) · [Research](docs/RESEARCH.md) · [Roadmap](docs/ROADMAP.md) · [Design doc](docs/PLAN.md)
 
-## License
+## <img src="docs/icons/shield.svg" width="22" height="22"> License
 
 [MIT](LICENSE)
