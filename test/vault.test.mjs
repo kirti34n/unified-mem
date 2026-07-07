@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 process.env.UNIFIED_MEM_VAULT_DIR = mkdtempSync(join(tmpdir(), 'umem-test-'));
 const {
   parseNote, tokenize, scoreNotes, detectOutcome, makeDiff, updateNoteFile,
-  validateNote, duplicateFrontmatterKey, reindexNotes, openDb, SECRET_RE, NOTES_DIR,
+  validateNote, duplicateFrontmatterKey, docFreq, reindexNotes, openDb, FTS5_OK, SECRET_RE, NOTES_DIR,
 } = await import('../scripts/vault.mjs');
 const { grade } = await import('../eval/run.mjs');
 
@@ -188,7 +188,7 @@ test('reindexNotes: a deleted note file is reconciled out of the DB and FTS', ()
   rmSync(p);
   reindexNotes(db);
   assert.equal(db.prepare("SELECT COUNT(*) c FROM notes WHERE id='2026-01-08-doomed'").get().c, 0); // no undead row
-  assert.equal(db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get('"zorptastic"').c, 0);
+  if (FTS5_OK) assert.equal(db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get('"zorptastic"').c, 0);
 });
 
 test('updateNoteFile: missing note file returns null instead of throwing', () => {
@@ -200,7 +200,7 @@ test('updateNoteFile: missing note file returns null instead of throwing', () =>
   reindexNotes(db); // clean up the now-orphaned row so later assertions are unaffected
 });
 
-test('reindexNotes: archived notes are excluded from the FTS index', () => {
+test('reindexNotes: archived notes are excluded from the FTS index', { skip: !FTS5_OK ? 'no FTS5 in this Node build' : false }, () => {
   writeFileSync(join(noteDir, '2026-01-10-archived-fts.md'),
     '---\nid: 2026-01-10-archived-fts\ntype: recovery\ntitle: quibblewick archived\nentities: [quibblewick]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: archived\nlinks: []\n---\nquibblewick body.');
   reindexNotes(db);
@@ -211,4 +211,12 @@ test('reindexNotes: archived notes are excluded from the FTS index', () => {
 test('export escaping: JSON-in-HTML hardening neutralizes </script>', () => {
   const escaped = JSON.stringify({ body: 'fix for </script> xss' }).replace(/</g, '\\u003c');
   assert.ok(!escaped.includes('</script>')); // cannot terminate the inline <script> on the static demo page
+});
+
+test('docFreq: keyword fallback (no FTS5) counts document frequency from the notes table', () => {
+  // exercises the path taken on Node builds whose node:sqlite lacks the FTS5 module
+  reindexNotes(db);
+  const df = docFreq(db, ['redis', 'zzznevermatchme'], false); // force the non-FTS branch
+  assert.ok(df.get('redis') >= 1);        // present in at least one active note
+  assert.equal(df.get('zzznevermatchme'), 0); // absent everywhere
 });

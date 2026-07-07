@@ -11,8 +11,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        # 22.13.0 is the floor: node:sqlite was flag-gated before it. Pin it exactly
-        # so the advertised minimum is actually exercised, not just the newest 22.x.
+        # 22.13.0 is the floor (node:sqlite unflagged there). Its bundled SQLite has
+        # no FTS5, so this leg also exercises the keyword-scoring fallback; 24.x
+        # exercises the FTS5/BM25 path. Pinned exactly so the floor is really tested.
         node: ['22.13.0', '24.x']
     steps:
       - uses: actions/checkout@v4

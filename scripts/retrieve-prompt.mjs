@@ -5,7 +5,7 @@
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -25,10 +25,7 @@ try {
   // A chatty prompt with no rare technical terms therefore injects NOTHING.
   const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
   const dfCap = Math.max(2, total * 0.3);
-  const df = new Map(terms.map(t => {
-    try { return [t, db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get(`"${t.replace(/"/g, '')}"`).c]; }
-    catch { return [t, 0]; }
-  }));
+  const df = docFreq(db, terms); // FTS5 when available, else a notes-table scan (same gate on any Node)
   const rare = new Set(terms.filter(t => df.get(t) > 0 && df.get(t) <= dfCap));   // present but discriminative: usable evidence
   const novel = terms.filter(t => df.get(t) === 0 && t.length > 4);               // vault has never seen these: the strongest gap signal
   const logGap = () => {

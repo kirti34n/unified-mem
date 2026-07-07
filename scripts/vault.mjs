@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 );
 `;
 
+// node:sqlite bundles SQLite, but the FTS5 module was only compiled into the
+// bundle from a later build (Node 22.13, the version where node:sqlite unflagged,
+// ships without it). Probe once: when FTS5 is present we use BM25 ranking; when it
+// is absent we degrade to keyword scoring so the vault still works, just less
+// precisely. UNIFIED_MEM_NO_FTS=1 forces the fallback (used to test that path).
+export const FTS5_OK = process.env.UNIFIED_MEM_NO_FTS === '1' ? false : (() => {
+  try { const d = new DatabaseSync(':memory:'); d.exec('CREATE VIRTUAL TABLE t USING fts5(x);'); d.close(); return true; }
+  catch { return false; }
+})();
+
 export function openDb() {
   mkdirSync(join(VAULT, 'index'), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
@@ -157,14 +167,32 @@ export function reindexNotes(db) {
   // Transactional: a concurrent hook read must never observe a missing notes_fts.
   // Archived notes are excluded: they are never retrieved, and indexing them only
   // inflates document-frequency and can suppress a live note that shares a term.
-  db.exec('BEGIN');
-  try {
-    db.exec('DROP TABLE IF EXISTS notes_fts;');
-    db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
-    db.prepare("INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes WHERE status != 'archived'").run();
-    db.exec('COMMIT');
-  } catch (e) { try { db.exec('ROLLBACK'); } catch { } throw e; }
+  // Skipped entirely when FTS5 is unavailable (retrieval falls back to keyword scoring).
+  if (FTS5_OK) {
+    db.exec('BEGIN');
+    try {
+      db.exec('DROP TABLE IF EXISTS notes_fts;');
+      db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
+      db.prepare("INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes WHERE status != 'archived'").run();
+      db.exec('COMMIT');
+    } catch (e) { try { db.exec('ROLLBACK'); } catch { } throw e; }
+  }
   return n;
+}
+
+// Document frequency per term, used by the per-prompt precision gate. Uses the FTS5
+// index when available (fast), else scans the notes table (fine at vault scale), so
+// the gate works identically on Node builds without FTS5. useFts is overridable for tests.
+export function docFreq(db, terms, useFts = FTS5_OK) {
+  if (useFts) {
+    return new Map(terms.map(t => {
+      try { return [t, db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get(`"${t.replace(/"/g, '')}"`).c]; }
+      catch { return [t, 0]; }
+    }));
+  }
+  const rows = db.prepare("SELECT title,entities,repos,files,body FROM notes WHERE status != 'archived'").all();
+  const docs = rows.map(r => new Set(tokenize([r.title, r.entities, r.repos, r.files, r.body].join(' '))));
+  return new Map(terms.map(t => [t, docs.filter(s => s.has(t)).length]));
 }
 
 // Stopwords: common English words carry no retrieval signal but match every note
@@ -175,8 +203,10 @@ export const tokenize = s =>
 
 const VALIDITY = { active: 1.0, 'needs-review': 0.4, archived: 0 };
 
-// FTS5/BM25 similarity per note id, normalized 0..1 (1 = best match). {} on failure.
+// FTS5/BM25 similarity per note id, normalized 0..1 (1 = best match). {} when FTS5
+// is unavailable or on failure, which makes scoreNotes fall back to keyword overlap.
 function ftsSim(db, queryTerms) {
+  if (!FTS5_OK) return {};
   try {
     const match = queryTerms.map(t => `"${t.replace(/"/g, '')}"`).join(' OR ');
     if (!match) return {};

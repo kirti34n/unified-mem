@@ -34,3 +34,6 @@ Copy `config.example.json` to `config.json` next to the tool; defaults apply for
 | `MEMORY_OFF=1` | disables all injection and capture (the eval control arm) |
 | `UNIFIED_MEM_NO_CAPTURE=1` | injection works but nothing is logged, mutated, or enqueued (eval arm A, internal calls) |
 | `UNIFIED_MEM_DEBUG=1` | hook errors, normally swallowed by design, are appended to `<vault>/index/hook-errors.jsonl` |
+| `UNIFIED_MEM_NO_FTS=1` | forces the keyword-scoring fallback instead of FTS5/BM25 (auto-detected; set this only to test the fallback path) |
+
+**Note on Node and FTS5:** the code runs on Node 22.13+ (`node:sqlite`), but FTS5/BM25 ranking needs a Node build whose bundled SQLite includes FTS5 (Node 24.x does; the 22.13 baseline does not). Where FTS5 is missing, retrieval automatically degrades to keyword scoring, so everything still works, just a little less precisely.
