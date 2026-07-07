@@ -12,6 +12,7 @@ try {
   const hook = JSON.parse(readFileSync(0, 'utf8'));
   const prompt = String(hook.prompt || '');
   if (prompt.length < 25 || prompt.startsWith('/')) process.exit(0); // trivial prompts and commands: nothing to match
+  if ((CONFIG.disabled_repos || []).includes(basename(hook.cwd || ''))) process.exit(0); // repo disabled in dashboard Repos view
   const db = openDb();
   const sessionId = hook.session_id || 'unknown';
   const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')

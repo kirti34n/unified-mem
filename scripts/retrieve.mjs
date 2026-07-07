@@ -1,9 +1,12 @@
 // SessionStart hook: print top-k vault notes (stdout → injected context)
 // and log the injection. Never blocks a session: any failure exits 0 silently.
+// Also auto-registers the repo: any git repo you open a session in joins the
+// repos map (enabling staleness watching + a repo card) unless disabled in the
+// dashboard's Repos view.
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, hookDebugLog, loadConfig, CONFIG, ROOT, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -23,8 +26,32 @@ try {
     git('git diff --name-only HEAD~5') || git('git diff --name-only'),
   ].join(' '));
 
-  const db = openDb();
   const repoName = basename(cwd);
+  if ((CONFIG.disabled_repos || []).includes(repoName)) process.exit(0); // memory switched off for this repo (dashboard Repos view)
+
+  // AUTO-REGISTER: a real session in a git repo not yet in the repos map adds it,
+  // so every new or old repo is covered the first time you open a session there.
+  // An instant minimal card gives this session repo awareness; the nightly job
+  // enriches it with vault knowledge.
+  if (process.env.UNIFIED_MEM_NO_CAPTURE !== '1' && !CONFIG.repos?.[repoName] && existsSync(join(cwd, '.git'))) {
+    try {
+      const cfgPath = join(ROOT, 'config.json');
+      const c = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
+      c.repos = { ...(c.repos || {}), [repoName]: cwd.replace(/\\/g, '/') };
+      writeFileSync(cfgPath, JSON.stringify(c, null, 2) + '\n');
+    } catch { /* concurrent session may have won the write; harmless */ }
+    try {
+      const cardPath = join(VAULT, 'repos', `${repoName}.md`);
+      if (!existsSync(cardPath)) {
+        mkdirSync(join(VAULT, 'repos'), { recursive: true });
+        const g = cmd => { try { return execSync(cmd, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return ''; } };
+        const recent = g('git log -5 --format=%cs %s').split('\n').filter(Boolean).map(l => `- ${l}`).join('\n');
+        writeFileSync(cardPath, `# ${repoName}\n\n(auto-registered; the nightly job enriches this card)\n\n- path: ${cwd.replace(/\\/g, '/')}\n- branch: ${g('git branch --show-current') || '?'}\n${recent ? `\n**Recent activity:**\n${recent}\n` : ''}`);
+      }
+    } catch { }
+  }
+
+  const db = openDb();
 
   // Dedupe vs notes already injected this session: resume/compact re-fires this
   // hook, and duplicate injection rows would double a note's per-session Q updates.

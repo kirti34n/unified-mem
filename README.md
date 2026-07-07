@@ -136,8 +136,9 @@ Three incidents were answerable only from memory. The honesty probe matters: mem
 
 ## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
 
-Five live views at `localhost:7777`, one per mechanism:
+Six live views at `localhost:7777`:
 
+- <img src="docs/icons/map.svg" width="15" height="15"> **Repos**: every repository the memory knows, with per-repo enable/disable (auto-registered on first session)
 - <img src="docs/icons/list.svg" width="15" height="15"> **Sessions**: what each session received and the Q-delta each note earned from the outcome
 - <img src="docs/icons/share.svg" width="15" height="15"> **Notes graph**: atomic notes linked through shared entities, sized by learned usefulness
 - <img src="docs/icons/trend.svg" width="15" height="15"> **Q evolution**: usefulness being learned; rising lines help, sagging lines decay toward archive
@@ -180,7 +181,7 @@ node scripts/seed.mjs --purge-demo  # drop the demo data once real notes flow
 node scripts/remember.mjs "Prefer pnpm over npm everywhere"   # your first pinned preference
 ```
 
-Point the `repos` map in `config.json` at your local clones so staleness detection can watch your actual code. Every knob (budgets, floors, models, caps) is documented in [docs/CONFIG.md](docs/CONFIG.md).
+Repos auto-register on their first session (and every hook is user-level), so new and old repos are covered the moment you open Claude Code in them; manage them, including per-repo disable, from the dashboard's Repos view. All pipeline calls (reflection on sonnet, judging and verification on pinned cheap models) go through the Claude CLI: nothing local, nothing separate. Every knob (budgets, floors, models, caps) is documented in [docs/CONFIG.md](docs/CONFIG.md).
 
 ## <img src="docs/icons/life-buoy.svg" width="22" height="22"> How it compares
 

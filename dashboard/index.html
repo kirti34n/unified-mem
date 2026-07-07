@@ -89,6 +89,7 @@ pre[class*=language-]{background:#111110!important;border:1px solid var(--grid);
 <div class="layout">
   <nav id="nav">
     <a href="#sessions">Sessions</a>
+    <a href="#repos">Repos</a>
     <a href="#graph">Notes graph</a>
     <a href="#q">Q evolution</a>
     <a href="#consolidation">Consolidation</a>
@@ -134,7 +135,7 @@ function render(){
   if(!S)return;
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+view));
   const m=$('#main');hideTip();
-  ({sessions:rSessions,graph:rGraph,q:rQ,consolidation:rCons,metrics:rMetrics}[view]||rSessions)(m);
+  ({sessions:rSessions,repos:rRepos,graph:rGraph,q:rQ,consolidation:rCons,metrics:rMetrics}[view]||rSessions)(m);
 }
 
 /* ---------- Sessions ---------- */
@@ -163,6 +164,27 @@ function rSessions(m){
           <span class="score">score ${i.score.toFixed(2)}</span>
           <span class="dq ${cls}" title="Q change from this session's outcome">${dtxt}</span></div>`;}).join('')+
     `</div>`;}).join('');
+}
+
+/* ---------- Repos ---------- */
+function rRepos(m){
+  const rows=(S.repos_ui||[]).map(r=>{
+    const when=r.last_session?fmtTs(r.last_session):'never';
+    return `<div class="inj" style="padding:10px 8px">
+      <span class="swatch" style="background:${r.enabled?'var(--good)':'var(--muted)'}"></span>
+      <span style="min-width:180px;font-weight:600;color:${r.enabled?'var(--ink)':'var(--muted)'}">${esc(r.name)}</span>
+      <span class="when" style="min-width:140px">last session: ${when}</span>
+      <span class="chip">${r.notes} notes</span>
+      <span class="when" style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(r.path||'(known from notes only)')}</span>
+      <button data-repo="${esc(r.name)}" style="background:none;border:1px solid ${r.enabled?'var(--crit)':'var(--good)'};color:${r.enabled?'var(--crit)':'var(--good)'};border-radius:6px;padding:3px 12px;cursor:pointer;font-size:12px">${r.enabled?'Disable':'Enable'}</button>
+    </div>`;}).join('');
+  m.innerHTML=`<h2>Repos</h2><div class="sub">Every repository the memory knows about. Repos auto-register on their first session; disabling one stops injection AND capture there until re-enabled (takes effect on the next session).</div>
+  <div class="card">${rows||'<div class="sub">no repos yet: open a Claude Code session in any git repo</div>'}</div>`;
+  m.querySelectorAll('button[data-repo]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;
+    await fetch('/api/toggle-repo',{method:'POST',body:JSON.stringify({name:b.dataset.repo})});
+    fp='';await poll();
+  });
 }
 
 /* ---------- Notes graph ---------- */

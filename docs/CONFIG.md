@@ -1,6 +1,6 @@
 # Config reference
 
-Copy `config.example.json` to `config.json` next to the tool; defaults apply for anything omitted. `node scripts/init.mjs` writes a starter for you.
+Copy `config.example.json` to `config.json` next to the tool; defaults apply for anything omitted. `node scripts/init.mjs` writes a starter for you. Repos auto-register: the first session you open in any git repo adds it to the `repos` map and writes an instant repo card.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -23,6 +23,7 @@ Copy `config.example.json` to `config.json` next to the tool; defaults apply for
 | `personal_budget_chars` | `800` | budget for the pinned PERSONAL PREFERENCES block at session start |
 | `preference_cap` | `30` | warn above this many active preferences (each one is pinned into every session) |
 | `repos` | `{}` | name-to-local-path map powering staleness invalidation and repo cards |
+| `disabled_repos` | `[]` | repos where memory is switched off (no injection, no capture); toggle from the dashboard Repos view |
 
 ## Environment variables
 

@@ -22,7 +22,7 @@ const DEFAULTS = {
   prompt_k: 2, prompt_min_sim: 0.15, start_min_sim: 0.2, contribution_judge: 'llm',
   daily_budget_usd: 5, max_reflections_per_run: 10,
   personal_budget_chars: 800, preference_cap: 30,
-  repos: {},
+  repos: {}, disabled_repos: [],
 };
 export function loadConfig() {
   try { return { ...DEFAULTS, ...JSON.parse(readFileSync(join(ROOT, 'config.json'), 'utf8')) }; }

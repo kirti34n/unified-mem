@@ -3,9 +3,9 @@
 // --export <dir>: writes a fully static copy (state inlined as window.__STATE__,
 // no polling, relative vendor paths) that renders offline from file:// or Pages.
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { openDb, todaySpendUsd, CONFIG, ROOT, VAULT } from './vault.mjs';
+import { openDb, todaySpendUsd, loadConfig, CONFIG, ROOT, VAULT } from './vault.mjs';
 
 const PORT = Number(process.env.PORT || 7777);
 const db = openDb();
@@ -37,9 +37,22 @@ function state() {
     spend_today_usd: todaySpendUsd(),
     daily_budget_usd: CONFIG.daily_budget_usd,
   };
+  // Repos view: everything the memory knows about, whether from the config map
+  // (auto-registered on first session) or note provenance, with enable state.
+  const cfg = loadConfig(); // fresh read: toggles must reflect without restart
+  const repoNames = new Set(Object.keys(cfg.repos || {}));
+  for (const n of notes) for (const r of (n.repos || '').split(',').map(s => s.trim()).filter(Boolean)) repoNames.add(r);
+  const repos_ui = [...repoNames].map(name => ({
+    name,
+    path: cfg.repos?.[name] ?? null,
+    notes: notes.filter(n => n.status !== 'archived' && (',' + n.repos + ',').includes(',' + name + ',')).length,
+    last_session: db.prepare('SELECT MAX(ts) t FROM sessions WHERE repo=? AND demo=0').get(name).t,
+    enabled: !(cfg.disabled_repos || []).includes(name),
+  })).sort((a, b) => (b.last_session || '').localeCompare(a.last_session || ''));
+
   return {
     generated_at: new Date().toISOString(),
-    summary, notes,
+    summary, notes, repos_ui,
     sessions: all('sessions').sort((a, b) => b.ts.localeCompare(a.ts)),
     injections: all('injections'),
     q_history: all('q_history'),
@@ -77,6 +90,25 @@ createServer((req, res) => {
     if (url === '/api/state') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(state()));
+    }
+    if (url === '/api/toggle-repo' && req.method === 'POST') {
+      let body = '';
+      req.on('data', c => body += c);
+      req.on('end', () => {
+        try {
+          const { name } = JSON.parse(body);
+          if (!name || typeof name !== 'string') throw new Error('name required');
+          const cfgPath = join(ROOT, 'config.json');
+          const c = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
+          const d = new Set(c.disabled_repos || []);
+          d.has(name) ? d.delete(name) : d.add(name);
+          c.disabled_repos = [...d];
+          writeFileSync(cfgPath, JSON.stringify(c, null, 2) + '\n');
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ name, enabled: !d.has(name) }));
+        } catch (e) { res.writeHead(400); res.end(e.message); }
+      });
+      return;
     }
     const file = url === '/' ? 'index.html' : url.replace(/^\/+|\.\./g, '');
     const body = readFileSync(join(ROOT, 'dashboard', file));

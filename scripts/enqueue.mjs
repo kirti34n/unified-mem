@@ -1,8 +1,8 @@
 // SessionEnd hook: enqueue the session for async reflection (<100 ms, R12).
 // The Phase-1 worker drains queue/ → reflector → notes. Never blocks.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { VAULT, hookDebugLog } from './vault.mjs';
+import { join, basename } from 'node:path';
+import { VAULT, CONFIG, hookDebugLog } from './vault.mjs';
 
 try {
   // Internal headless calls (reflector, verify, judge, arbiter, eval) must never be
@@ -10,6 +10,7 @@ try {
   // a cost loop that reflects its own machinery. They all set one of these flags.
   if (process.env.MEMORY_OFF === '1' || process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0);
   const hook = JSON.parse(readFileSync(0, 'utf8'));
+  if ((CONFIG.disabled_repos || []).includes(basename(hook.cwd || ''))) process.exit(0); // repo disabled in dashboard Repos view
   const id = hook.session_id || `unknown-${Date.now()}`;
   mkdirSync(join(VAULT, 'queue'), { recursive: true });
   writeFileSync(join(VAULT, 'queue', `${id}.json`), JSON.stringify({

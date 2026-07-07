@@ -159,8 +159,10 @@ function reflect(db, entry, text) {
   const nearest = scoreNotes(db, tokenize(text.slice(0, 4000)), 10)
     .map(n => `- ${n.id}: ${n.title}`).join('\n') || '(none)';
   const prompt = REFLECT_PROMPT(text, git('git log -5 --format="%h %s"'), nearest);
-  // tier routing: small sessions rarely need the big model; escalate by transcript size
-  const model = text.length < 20_000 ? CONFIG.verify_model : MODEL;
+  // Reflection ALWAYS uses the session-grade CLI model (reflector_model, sonnet
+  // by default): the notes it writes become context for future sessions, so no
+  // downgrade routing. All pipeline calls go through the Claude CLI; nothing local.
+  const model = MODEL;
   const res = runClaude('reflect', model, prompt, { cwd: entry.cwd, timeout: 300_000 });
   if (!res) return 0;
   let written = 0;
