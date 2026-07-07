@@ -176,7 +176,7 @@ function rRepos(m){
       <span class="when" style="min-width:140px">last session: ${when}</span>
       <span class="chip">${r.notes} notes</span>
       <span class="when" style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(r.path||'(known from notes only)')}</span>
-      <button data-repo="${esc(r.name)}" style="background:none;border:1px solid ${r.enabled?'var(--crit)':'var(--good)'};color:${r.enabled?'var(--crit)':'var(--good)'};border-radius:6px;padding:3px 12px;cursor:pointer;font-size:12px">${r.enabled?'Disable':'Enable'}</button>
+      ${window.__STATE__?'<span class="when">(toggle available on your local install)</span>':`<button data-repo="${esc(r.name)}" style="background:none;border:1px solid ${r.enabled?'var(--crit)':'var(--good)'};color:${r.enabled?'var(--crit)':'var(--good)'};border-radius:6px;padding:3px 12px;cursor:pointer;font-size:12px">${r.enabled?'Disable':'Enable'}</button>`}
     </div>`;}).join('');
   m.innerHTML=`<h2>Repos</h2><div class="sub">Every repository the memory knows about. Repos auto-register on their first session; disabling one stops injection AND capture there until re-enabled (takes effect on the next session).</div>
   <div class="card">${rows||'<div class="sub">no repos yet: open a Claude Code session in any git repo</div>'}</div>`;
