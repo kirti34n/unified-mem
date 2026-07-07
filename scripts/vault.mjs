@@ -3,7 +3,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, userInfo, hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -266,6 +266,56 @@ export function detectOutcome(text) {
     && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success';
   if (/([1-9]\d* (failed|failing)|build failed|tests? fail|FATAL|unhandled exception)/i.test(tail)) return 'failure';
   return 'indeterminate';
+}
+
+// Explicit personal capture, shared by the vault_remember MCP tool and the
+// remember.mjs CLI. Same gates as the reflector (schema, secrets, size);
+// provenance is stamped here, never trusted from the caller. Preferences start
+// at Q 0.6: an explicit user statement outranks a freshly distilled guess.
+export function rememberNote(text, { kind = 'preference', title = null, sessionId = 'user-explicit' } = {}) {
+  text = String(text || '').trim();
+  if (!text) throw new Error('empty text');
+  if (text.split(/\s+/).length > 150) throw new Error('too long: 150 words max for a remembered note');
+  if (SECRET_RE.test(text)) throw new Error('secret pattern detected: not stored');
+  const type = kind === 'preference' ? 'preference' : 'convention';
+  const t = (title || text).replace(/\s+/g, ' ').trim().slice(0, 80);
+  const slug = t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .split('-').slice(0, 6).join('-') || 'note';
+  const today = new Date().toISOString().slice(0, 10);
+  const db = openDb();
+  let id = `${today}-${slug}`;
+  let i = 2;
+  while (db.prepare('SELECT 1 FROM notes WHERE id=?').get(id)) id = `${today}-${slug}-${i++}`;
+  const note = `---
+id: ${id}
+type: ${type}
+title: ${t}
+entities: []
+repos: []
+files: []
+source_commit: user
+confidence: high
+q_value: ${kind === 'preference' ? '0.60' : '0.50'}
+access_count: 0
+last_used: null
+last_validated: ${today}
+status: active
+scope: personal
+author: ${userInfo().username}
+machine: ${hostname()}
+source_session: ${sessionId}
+trust: user-explicit
+links: []
+---
+${text}
+`;
+  const invalid = validateNote(parseNote(note), ['preference', 'convention']);
+  if (invalid) throw new Error(invalid);
+  const dir = join(NOTES_DIR, 'personal');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.md`), note);
+  reindexNotes(db);
+  return id;
 }
 
 // ---- LLM pipeline calls: one path, budget-guarded, cost-ledgered ----

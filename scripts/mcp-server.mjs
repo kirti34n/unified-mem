@@ -1,11 +1,11 @@
-// Minimal MCP stdio server exposing vault_search, the opt-in PULL path (R10).
-// Register (opt-in; the push path via hooks remains primary):
+// Minimal MCP stdio server exposing vault_search (pull) and vault_remember
+// (explicit personal capture). Register (opt-in; push via hooks stays primary):
 //   claude mcp add --scope user vault-search -- node /path/to/unified-mem/scripts/mcp-server.mjs
 import { createInterface } from 'node:readline';
-import { openDb, scoreNotes, tokenize } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, rememberNote } from './vault.mjs';
 
 const db = openDb();
-const TOOL = {
+const SEARCH_TOOL = {
   name: 'vault_search',
   description: 'Search the team knowledge vault (cross-repo notes: past fixes, patterns, decisions, conventions). Returns the top-k notes ranked by relevance × learned usefulness.',
   inputSchema: {
@@ -16,6 +16,19 @@ const TOOL = {
       k: { type: 'number', description: 'Max notes to return (default 5)' },
     },
     required: ['query'],
+  },
+};
+const REMEMBER_TOOL = {
+  name: 'vault_remember',
+  description: 'Save a personal preference or a durable user-stated note to the memory vault. Use when the user says "remember that ..." or states a lasting preference. Preferences are pinned into every future session in every repo.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'The preference or note, 150 words max, factual voice' },
+      kind: { type: 'string', enum: ['preference', 'note'], description: 'preference (default): a rule about the user. note: a general durable fact.' },
+      title: { type: 'string', description: 'Optional short title' },
+    },
+    required: ['text'],
   },
 };
 
@@ -40,11 +53,21 @@ createInterface({ input: process.stdin }).on('line', line => {
     capabilities: { tools: {} },
     serverInfo: { name: 'unified-mem', version: '1.0.0' },
   });
-  if (method === 'tools/list') return reply(id, { tools: [TOOL] });
+  if (method === 'tools/list') return reply(id, { tools: [SEARCH_TOOL, REMEMBER_TOOL] });
   if (method === 'tools/call') {
-    if (params?.name !== 'vault_search') return fail(id, -32602, `unknown tool: ${params?.name}`);
-    try { return reply(id, { content: [{ type: 'text', text: search(params.arguments || {}) }] }); }
-    catch (e) { return fail(id, -32603, e.message); }
+    const args = params?.arguments || {};
+    try {
+      if (params?.name === 'vault_search')
+        return reply(id, { content: [{ type: 'text', text: search(args) }] });
+      if (params?.name === 'vault_remember') {
+        const noteId = rememberNote(args.text, {
+          kind: args.kind === 'note' ? 'note' : 'preference',
+          title: args.title, sessionId: 'mcp-explicit',
+        });
+        return reply(id, { content: [{ type: 'text', text: `saved as ${noteId}; it will be available in every future session` }] });
+      }
+      return fail(id, -32602, `unknown tool: ${params?.name}`);
+    } catch (e) { return fail(id, -32603, e.message); }
   }
   if (id !== undefined) return fail(id, -32601, `method not found: ${method}`); // notifications: silently ignored
 });
