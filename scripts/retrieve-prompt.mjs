@@ -5,7 +5,7 @@
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG, ROOT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -33,7 +33,7 @@ try {
   const logGap = () => {
     if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return;
     try {
-      appendFileSync(join(ROOT, 'index', 'gaps.jsonl'), JSON.stringify({
+      appendFileSync(join(VAULT, 'index', 'gaps.jsonl'), JSON.stringify({
         ts: new Date().toISOString(), repo: basename(hook.cwd || ''),
         novel: novel.slice(0, 8), rare: [...rare].slice(0, 8),
       }) + '\n');

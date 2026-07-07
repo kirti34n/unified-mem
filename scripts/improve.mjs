@@ -9,7 +9,7 @@
 // Log:    improve/log.jsonl (one JSON line per iteration, hypothesis, scores, verdict)
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, loadConfig } from './vault.mjs';
+import { ROOT, VAULT, loadConfig } from './vault.mjs';
 import { runEval, defaultQuestionFile } from '../eval/run.mjs';
 
 const argv = process.argv.slice(2);
@@ -36,7 +36,7 @@ const evalOpts = {
   }
 }
 const CONFIG_PATH = join(ROOT, 'config.json');
-const LOG_DIR = join(ROOT, 'improve');
+const LOG_DIR = join(VAULT, 'improve');
 mkdirSync(LOG_DIR, { recursive: true });
 const log = entry => appendFileSync(join(LOG_DIR, 'log.jsonl'), JSON.stringify(entry) + '\n');
 
@@ -77,7 +77,7 @@ console.log(`baseline: correct ${(best.summary.A.correct_rate * 100).toFixed(0)}
 log({ ts: new Date().toISOString(), phase: 'baseline', summary: best.summary, score: bestScore });
 
 for (let i = 1; i <= ITER; i++) {
-  if (existsSync(join(ROOT, 'STOP'))) { console.log('STOP file found, halting.'); break; }
+  if (existsSync(join(VAULT, 'STOP'))) { console.log('STOP file found, halting.'); break; }
   const cfg = loadConfig();
   const h = hypotheses(cfg).next().value;
   if (!h) { console.log('knob grid exhausted, halting. Add values to KNOBS in improve.mjs to continue.'); break; }

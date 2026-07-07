@@ -1,16 +1,17 @@
 // Shared vault library: config, schema, note parsing, FTS5 reindex, scored retrieval,
 // note-file frontmatter updates + diff generation for the consolidation log.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+// ROOT = the tool checkout (read-only in normal operation, except config.json).
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-export const DB_PATH = join(ROOT, 'index', 'vault.db');
-export const NOTES_DIR = join(ROOT, 'notes');
 
 const DEFAULTS = {
+  vault_dir: null,
   weights: { sim: 0.40, q: 0.30, recency: 0.15, validity: 0.15 },
   k: 5, max_inject_chars: 10000, recency_half_life_days: 30,
   decay_factor_per_week: 0.95, decay_after_unused_days: 7,
@@ -27,6 +28,24 @@ export function loadConfig() {
   catch { return DEFAULTS; }
 }
 export const CONFIG = loadConfig();
+
+// VAULT = where the user's data lives (its own git repo: notes tracked, caches not).
+// Resolution: env override (tests) > config.vault_dir > back-compat in-repo layout
+// (a ./notes dir in the tool checkout, pre-split installs) > ~/.unified-mem/vault.
+const expandHome = p => p.replace(/^~(?=[\\/]|$)/, homedir());
+export const DEFAULT_VAULT = join(homedir(), '.unified-mem', 'vault');
+export const VAULT = (() => {
+  if (process.env.UNIFIED_MEM_VAULT_DIR) return resolve(expandHome(process.env.UNIFIED_MEM_VAULT_DIR));
+  if (CONFIG.vault_dir) return resolve(expandHome(CONFIG.vault_dir));
+  if (existsSync(join(ROOT, 'notes'))) {
+    if (process.env.UNIFIED_MEM_DEBUG === '1')
+      console.error('unified-mem: using legacy in-checkout vault layout; set vault_dir in config.json to split data from the tool (see scripts/init.mjs)');
+    return ROOT;
+  }
+  return DEFAULT_VAULT;
+})();
+export const DB_PATH = join(VAULT, 'index', 'vault.db');
+export const NOTES_DIR = join(VAULT, 'notes');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS notes (
@@ -57,7 +76,7 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 `;
 
 export function openDb() {
-  mkdirSync(join(ROOT, 'index'), { recursive: true });
+  mkdirSync(join(VAULT, 'index'), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
   db.exec('PRAGMA journal_mode=WAL;');
   db.exec('PRAGMA busy_timeout=5000;'); // per-connection: readers wait instead of SQLITE_BUSY
@@ -206,7 +225,7 @@ export function makeDiff(path, before, after) {
 export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
 
 // ---- LLM pipeline calls: one path, budget-guarded, cost-ledgered ----
-const LEDGER = join(ROOT, 'index', 'cost-ledger.jsonl');
+const LEDGER = join(VAULT, 'index', 'cost-ledger.jsonl');
 
 export function todaySpendUsd() {
   try {
@@ -244,7 +263,7 @@ export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000 } 
   try { j = JSON.parse(r.stdout); } catch { return { text: String(r.stdout || ''), usd: 0 }; }
   const usd = j.total_cost_usd ?? 0;
   try {
-    mkdirSync(join(ROOT, 'index'), { recursive: true });
+    mkdirSync(join(VAULT, 'index'), { recursive: true });
     appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
   } catch { }
   return { text: String(j.result ?? ''), usd };

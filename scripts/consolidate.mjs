@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { openDb, reindexNotes, updateNoteFile, runClaude, CONFIG, ROOT } from './vault.mjs';
+import { openDb, reindexNotes, updateNoteFile, runClaude, CONFIG, VAULT } from './vault.mjs';
 
 const db = openDb();
 reindexNotes(db);
@@ -191,10 +191,10 @@ const byEntity = {};
 for (const n of hubNotes)
   for (const e of (n.entities || '').split(',').map(s => s.trim()).filter(Boolean))
     (byEntity[e] ??= []).push(n);
-mkdirSync(join(ROOT, 'entities'), { recursive: true });
+mkdirSync(join(VAULT, 'entities'), { recursive: true });
 // full regeneration: remove stale hub files whose notes are gone (e.g. after purge)
 const { readdirSync, unlinkSync } = await import('node:fs');
-for (const f of readdirSync(join(ROOT, 'entities'))) if (f.endsWith('.md')) unlinkSync(join(ROOT, 'entities', f));
+for (const f of readdirSync(join(VAULT, 'entities'))) if (f.endsWith('.md')) unlinkSync(join(VAULT, 'entities', f));
 let hubs = 0;
 for (const [e, ns] of Object.entries(byEntity)) {
   const safe = e.replace(/[^a-z0-9_-]/gi, '-');
@@ -202,14 +202,14 @@ for (const [e, ns] of Object.entries(byEntity)) {
     ns.sort((x, y) => y.q_value - x.q_value)
       .map(n => `- [[${n.id}]] (${n.type}, Q ${n.q_value.toFixed(2)}${n.status === 'needs-review' ? ', NEEDS REVIEW' : ''}): ${n.title}`)
       .join('\n') + '\n';
-  writeFileSync(join(ROOT, 'entities', `${safe}.md`), body);
+  writeFileSync(join(VAULT, 'entities', `${safe}.md`), body);
   hubs++;
 }
 
 // REPO CARDS: per-repo overview pages, "what is there, what is happening, what the
 // vault knows". The SessionStart hook injects the current repo's card so every
 // session cold-starts with an accurate picture; details load on demand.
-const cardsDir = join(ROOT, 'repos');
+const cardsDir = join(VAULT, 'repos');
 mkdirSync(cardsDir, { recursive: true });
 let cards = 0;
 for (const [name, repoPath] of Object.entries(CONFIG.repos)) {

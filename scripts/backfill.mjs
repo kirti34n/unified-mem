@@ -4,11 +4,11 @@
 import { readdirSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { ROOT } from './vault.mjs';
+import { VAULT } from './vault.mjs';
 
 const PER_REPO = Number(process.argv.includes('--per-repo') ? process.argv[process.argv.indexOf('--per-repo') + 1] : 2);
 const PROJECTS = join(homedir(), '.claude', 'projects');
-mkdirSync(join(ROOT, 'queue'), { recursive: true });
+mkdirSync(join(VAULT, 'queue'), { recursive: true });
 
 // cwd is recorded inside the transcript itself, more reliable than un-munging the dir name
 function cwdOf(path) {
@@ -34,7 +34,7 @@ for (const dir of readdirSync(PROJECTS)) {
     if (!cwd) continue;
     if (resolve(cwd) === resolve(ROOT)) continue; // the vault repo itself: already captured live
     const id = `backfill-${basename(cwd)}-${basename(f, '.jsonl').slice(0, 8)}`;
-    writeFileSync(join(ROOT, 'queue', `${id}.json`), JSON.stringify({
+    writeFileSync(join(VAULT, 'queue', `${id}.json`), JSON.stringify({
       session_id: id, transcript_path: f, cwd, ts: new Date().toISOString(), backfill: true,
     }, null, 2));
     console.log(`queued ${id}  (${(statSync(f).size / 1048576).toFixed(1)}MB, cwd: ${cwd})`);

@@ -6,14 +6,14 @@ import { readFileSync, readdirSync, unlinkSync, writeFileSync, mkdirSync, exists
 import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { userInfo, hostname } from 'node:os';
-import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, runClaude, CONFIG, ROOT, NOTES_DIR, SECRET_RE } from './vault.mjs';
+import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, runClaude, CONFIG, ROOT, VAULT, NOTES_DIR, SECRET_RE } from './vault.mjs';
 
 const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
 
 const argv = process.argv.slice(2);
 const MODEL = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : CONFIG.reflector_model;
 const REFLECT = !argv.includes('--no-reflect');
-const QUEUE = join(ROOT, 'queue');
+const QUEUE = join(VAULT, 'queue');
 
 // Extract readable text from a Claude Code transcript (.jsonl). Caps size.
 function transcriptText(path, maxChars = 60_000) {

@@ -3,7 +3,7 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG, ROOT } from './vault.mjs';
+import { openDb, scoreNotes, tokenize, CONFIG, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -38,7 +38,7 @@ try {
   let out = 'Unified cross-repo memory (a layer on top of this project\'s own memory). This is the cold-start catalog; matching notes auto-load with each prompt, and vault_search pulls explicitly. Verify anything against current code.\n';
   out += `\nMEMORY CATALOG (notes per repo): ${Object.entries(perRepo).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} (${c})`).join(' · ')}\n`;
   try {
-    const card = readFileSync(join(ROOT, 'repos', `${repoName}.md`), 'utf8');
+    const card = readFileSync(join(VAULT, 'repos', `${repoName}.md`), 'utf8');
     out += `\nTHIS REPO, what is there and what is happening:\n${card.replace(/^# .*\r?\n/, '').trim().slice(0, 1400)}\n`;
   } catch { /* no card yet for this repo */ }
 

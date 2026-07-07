@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { openDb, todaySpendUsd, CONFIG, ROOT } from './vault.mjs';
+import { openDb, todaySpendUsd, CONFIG, ROOT, VAULT } from './vault.mjs';
 
 const PORT = Number(process.env.PORT || 7777);
 const db = openDb();
@@ -29,7 +29,7 @@ function state() {
       return s ? (s - w) / s : 0;
     })(),
     gaps: (() => {
-      try { return readFileSync(join(ROOT, 'index', 'gaps.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length; }
+      try { return readFileSync(join(VAULT, 'index', 'gaps.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length; }
       catch { return 0; }
     })(),
     spend_today_usd: todaySpendUsd(),

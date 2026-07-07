@@ -2,7 +2,7 @@
 // The Phase-1 worker drains queue/ → reflector → notes. Never blocks.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT } from './vault.mjs';
+import { VAULT } from './vault.mjs';
 
 try {
   // Internal headless calls (reflector, verify, judge, arbiter, eval) must never be
@@ -11,8 +11,8 @@ try {
   if (process.env.MEMORY_OFF === '1' || process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0);
   const hook = JSON.parse(readFileSync(0, 'utf8'));
   const id = hook.session_id || `unknown-${Date.now()}`;
-  mkdirSync(join(ROOT, 'queue'), { recursive: true });
-  writeFileSync(join(ROOT, 'queue', `${id}.json`), JSON.stringify({
+  mkdirSync(join(VAULT, 'queue'), { recursive: true });
+  writeFileSync(join(VAULT, 'queue', `${id}.json`), JSON.stringify({
     session_id: id,
     transcript_path: hook.transcript_path,
     cwd: hook.cwd,

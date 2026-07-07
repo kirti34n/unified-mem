@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { CONFIG, ROOT } from '../scripts/vault.mjs';
+import { CONFIG, ROOT, VAULT } from '../scripts/vault.mjs';
 
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
 const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
@@ -65,8 +65,8 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     demo: argv.includes('--demo'),
   });
   console.log('\nsummary:', JSON.stringify(result.summary, null, 2));
-  mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });
-  const file = join(EVAL_DIR, 'results', `${result.ts.replace(/[:.]/g, '-')}.json`);
+  mkdirSync(join(VAULT, 'eval-results'), { recursive: true });
+  const file = join(VAULT, 'eval-results', `${result.ts.replace(/[:.]/g, '-')}.json`);
   writeFileSync(file, JSON.stringify(result, null, 2));
   console.log('saved:', file);
 }
