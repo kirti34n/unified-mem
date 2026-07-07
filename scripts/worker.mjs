@@ -163,11 +163,16 @@ function reflect(db, entry, text) {
   if (!res) return 0;
   let written = 0;
   for (const m of res.text.matchAll(/<<<NOTE\r?\n([\s\S]*?)\r?\nNOTE>>>/g)) {
-    const note = (m[1].trim() + '\n').replace(/^q_value:.*$/m, 'q_value: 0.50'); // new notes start neutral (R2)
-    // schema gate: reflector output is untrusted, reject anything malformed
+    const note = (m[1].trim() + '\n')
+      .replace(/^q_value:.*$/m, 'q_value: 0.50')   // new notes start neutral (R2)
+      .replace(/^scope:.*$/m, 'scope: shared');    // reflected notes are never personal/pinned
+    // schema gate: reflector output is untrusted, reject anything malformed.
+    // Only the five knowledge types: preference/reference come from explicit
+    // user capture paths, never from transcript distillation.
+    const REFLECT_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
     const parsed = parseNote(note);
     const id = parsed?.id;
-    const invalid = validateNote(parsed);
+    const invalid = validateNote(parsed, REFLECT_TYPES);
     if (invalid) { console.error(`dropped ${id || '(no id)'}: ${invalid}`); continue; }
     if (SECRET_RE.test(note)) { console.error(`dropped ${id}: secret pattern detected`); continue; }
     if (db.prepare('SELECT 1 FROM notes WHERE id=?').get(id)) continue;

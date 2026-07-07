@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, confidence TEXT,
   q_value REAL, repos TEXT, entities TEXT, files TEXT, links TEXT,
   source_commit TEXT, created TEXT, last_used TEXT, last_validated TEXT,
-  access_count INTEGER DEFAULT 0, body TEXT, path TEXT
+  access_count INTEGER DEFAULT 0, body TEXT, path TEXT, scope TEXT DEFAULT 'shared'
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, ts TEXT, repo TEXT, outcome TEXT,
@@ -81,6 +81,7 @@ export function openDb() {
   db.exec('PRAGMA journal_mode=WAL;');
   db.exec('PRAGMA busy_timeout=5000;'); // per-connection: readers wait instead of SQLITE_BUSY
   db.exec(SCHEMA);
+  try { db.exec("ALTER TABLE notes ADD COLUMN scope TEXT DEFAULT 'shared'"); } catch { } // migration for pre-P3 vaults
   return db;
 }
 
@@ -121,8 +122,8 @@ export function* walkNotes(dir = NOTES_DIR) {
 export function reindexNotes(db) {
   const up = db.prepare(`INSERT OR REPLACE INTO notes
     (id,title,type,status,confidence,q_value,repos,entities,files,links,
-     source_commit,created,last_used,last_validated,access_count,body,path)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     source_commit,created,last_used,last_validated,access_count,body,path,scope)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let n = 0;
   for (const p of walkNotes()) {
     const note = parseNote(readFileSync(p, 'utf8'), p);
@@ -132,7 +133,7 @@ export function reindexNotes(db) {
       note.confidence ?? 'med', Number(note.q_value ?? 0.5), csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
       note.id.slice(0, 10), note.last_used ?? null, note.last_validated ?? null,
-      Number(note.access_count ?? 0), note.body ?? '', p);
+      Number(note.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared');
     n++;
   }
   // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers).
@@ -240,14 +241,19 @@ export function hookDebugLog(script, err) {
   } catch { }
 }
 
-export const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
+// preference: short rules about the user (personal scope, pinned at session start).
+// reference: chunks ingested from the user's own docs (matched per prompt like any note).
+export const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention', 'preference', 'reference'];
 
-// Schema gate for reflector output (untrusted). Returns null if valid, else the reason.
-export function validateNote(parsed) {
+// Schema gate for untrusted note content. Returns null if valid, else the reason.
+// Callers narrow allowedTypes: the reflector may only emit its five knowledge
+// types, never preference/reference (a poisoned transcript must not be able to
+// plant a note that gets pinned into every session).
+export function validateNote(parsed, allowedTypes = NOTE_TYPES) {
   if (!parsed?.id || !/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/.test(parsed.id)) return 'invalid or missing id';
   if (!parsed.title) return 'missing title';
   if (!parsed.body) return 'missing body';
-  if (!NOTE_TYPES.includes(parsed.type)) return `type must be one of: ${NOTE_TYPES.join('|')}`;
+  if (!allowedTypes.includes(parsed.type)) return `type must be one of: ${allowedTypes.join('|')}`;
   return null;
 }
 

@@ -26,6 +26,8 @@ queue/
 eval-results/
 improve/
 # notes/, entities/, repos/ are TRACKED: they are the vault
+# uncomment to keep personal preferences/docs out of a shared vault repo:
+# notes/personal/
 `);
 
 if (!existsSync(join(target, '.git'))) {
