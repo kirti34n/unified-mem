@@ -15,7 +15,8 @@
     "worker": "node scripts/worker.mjs",
     "consolidate": "node scripts/consolidate.mjs",
     "test": "node --test",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "remember": "node scripts/remember.mjs"
   },
   "dependencies": {}
 }
