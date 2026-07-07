@@ -8,6 +8,8 @@
 [![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+**[Live dashboard demo](https://kirti34n.github.io/unified-mem/demo-site/)**: the real UI, no install, fictional data.
+
 <img src="docs/screenshots/sessions.png" width="82%" alt="Live dashboard: sessions, injections, and the Q-score each note earned">
 
 </div>

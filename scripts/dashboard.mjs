@@ -1,7 +1,9 @@
 // Live vault dashboard: zero-dependency http server on :7777.
 // Serves dashboard/index.html + /api/state (full vault snapshot, polled by the page).
+// --export <dir>: writes a fully static copy (state inlined as window.__STATE__,
+// no polling, relative vendor paths) that renders offline from file:// or Pages.
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { openDb, todaySpendUsd, CONFIG, ROOT, VAULT } from './vault.mjs';
 
@@ -44,6 +46,25 @@ function state() {
     consolidations: all('consolidations').sort((a, b) => b.ts.localeCompare(a.ts)),
     metrics: all('metrics_daily').sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+const argv = process.argv.slice(2);
+if (argv.includes('--export')) {
+  const outDir = argv[argv.indexOf('--export') + 1] || join(ROOT, 'docs', 'demo-site');
+  mkdirSync(join(outDir, 'vendor'), { recursive: true });
+  for (const f of readdirSync(join(ROOT, 'dashboard', 'vendor')))
+    copyFileSync(join(ROOT, 'dashboard', 'vendor', f), join(outDir, 'vendor', f));
+  let html = readFileSync(join(ROOT, 'dashboard', 'index.html'), 'utf8')
+    .replaceAll('href="/vendor/', 'href="vendor/')
+    .replaceAll('src="/vendor/', 'src="vendor/')
+    .replace("const r=await fetch('/api/state');S=await r.json();", 'S=window.__STATE__;')
+    .replace('poll();setInterval(poll,5000);', 'poll();')
+    .replace('<span class="live"><span class="dot"></span>LIVE</span>',
+      '<span class="live">static demo · fictional seed data · <a href="https://github.com/kirti34n/unified-mem" style="color:inherit">get the real thing</a></span>')
+    .replace('</head>', `<script>window.__STATE__=${JSON.stringify(state())}</script>\n</head>`);
+  writeFileSync(join(outDir, 'index.html'), html);
+  console.log(`static dashboard exported to ${outDir}`);
+  process.exit(0);
 }
 
 createServer((req, res) => {

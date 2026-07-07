@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>unified-mem · live memory dashboard</title>
+<link rel="stylesheet" href="vendor/prism-tomorrow.min.css">
+<link rel="stylesheet" href="vendor/prism-diff-highlight.min.css">
+<style>
+:root{
+  --page:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300; --s5:#9085e9; --s6:#e66767;
+  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  --spark:#86b6ef;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--page);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--grid);position:sticky;top:0;background:var(--page);z-index:5}
+header h1{font-size:16px;font-weight:600}
+.live{display:flex;align-items:center;gap:6px;color:var(--ink2);font-size:12px}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--good);animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.hstats{margin-left:auto;color:var(--ink2);font-size:13px}
+.hstats b{color:var(--ink);font-weight:600}
+.updated{color:var(--muted);font-size:12px}
+.layout{display:flex;min-height:calc(100vh - 57px)}
+nav{width:172px;padding:16px 10px;border-right:1px solid var(--grid);flex-shrink:0}
+nav a{display:block;padding:8px 12px;border-radius:8px;color:var(--ink2);text-decoration:none;font-size:13.5px;margin-bottom:2px}
+nav a:hover{background:var(--surface)}
+nav a.on{background:var(--surface);color:var(--ink);font-weight:600}
+main{flex:1;padding:20px;max-width:1060px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+h2{font-size:15px;font-weight:600;margin-bottom:4px}
+.sub{color:var(--muted);font-size:12.5px;margin-bottom:12px}
+/* sessions */
+.sess-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.chip{border:1px solid var(--border);border-radius:999px;padding:1px 10px;font-size:12px;color:var(--ink2)}
+.badge{font-size:12px;font-weight:600;display:inline-flex;gap:5px;align-items:center}
+.badge.success{color:var(--good)} .badge.failure{color:var(--crit)} .badge.indeterminate{color:var(--muted)}
+.tag-live{font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--good);border:1px solid var(--good);border-radius:4px;padding:0 5px}
+.when{color:var(--muted);font-size:12px}
+.toks{margin-left:auto;color:var(--muted);font-size:12px}
+.sess-sum{color:var(--ink2);margin:6px 0 10px}
+.inj{display:flex;align-items:center;gap:10px;padding:6px 8px;border-top:1px solid var(--grid);font-size:13px}
+.inj .rank{color:var(--muted);width:18px;font-variant-numeric:tabular-nums}
+.inj .swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.inj .score{color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.dq{width:70px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.dq.up{color:var(--good)} .dq.down{color:var(--crit)} .dq.none{color:var(--muted);font-weight:400}
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:14px}
+.tile .lbl{color:var(--ink2);font-size:12.5px}
+.tile .val{font-size:30px;font-weight:600;margin:2px 0}
+.tile .delta{font-size:12px;font-weight:600}
+.tile .note{font-size:12px;color:var(--muted)}
+/* charts */
+svg text{font:11px system-ui,sans-serif;fill:var(--muted)}
+svg .tick{font-variant-numeric:tabular-nums}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink2)}
+.legend .key{display:inline-flex;align-items:center;gap:6px}
+.legend .sw{width:10px;height:10px;border-radius:2px}
+.legend .ln{width:14px;height:2px;border-radius:1px}
+details{margin-top:12px}
+summary{color:var(--muted);font-size:12.5px;cursor:pointer}
+table{border-collapse:collapse;margin-top:8px;font-size:12.5px;font-variant-numeric:tabular-nums;width:100%}
+th,td{text-align:left;padding:4px 10px;border-bottom:1px solid var(--grid);color:var(--ink2)}
+th{color:var(--muted);font-weight:500}
+/* consolidation */
+.op{font-size:11px;font-weight:700;letter-spacing:.5px;border-radius:4px;padding:1px 7px;border:1px solid var(--border);color:var(--ink2)}
+.op.invalidate{color:var(--warn);border-color:var(--warn)}
+.op.verify{color:var(--good);border-color:var(--good)}
+.op.archive,.op.decay{color:var(--muted)}
+pre[class*=language-]{background:#111110!important;border:1px solid var(--grid);border-radius:8px;font-size:12.5px;margin-top:10px;overflow-x:auto}
+/* graph + tooltip */
+#graph{width:100%;height:520px;display:block;cursor:default}
+#tip{position:fixed;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12.5px;color:var(--ink2);max-width:300px;z-index:20;display:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+#tip b{color:var(--ink)}
+.crosshair{stroke:var(--axis);stroke-width:1}
+</style>
+<script>window.__STATE__={"generated_at":"2026-07-07T09:34:07.624Z","summary":{"active":4,"needs_review":1,"archived":1,"mean_q":0.594,"retrievals":23,"stale_rate":0.043478260869565216,"abstention_rate":0,"gaps":0,"spend_today_usd":0,"daily_budget_usd":5},"notes":[{"id":"2026-06-16-jwt-refresh-race","title":"JWT refresh race causes 401 bursts under load","type":"recovery","status":"active","confidence":"high","q_value":0.78,"repos":"api-core,auth-service","entities":"auth-service,jwt,redis","files":"src/auth/token.ts,src/middleware/refresh.ts","links":"[[2026-06-16-redis-lock-pattern]]","source_commit":"8f3ab21","created":"2026-06-16","last_used":"2026-07-07","last_validated":"2026-06-29","access_count":9,"body":"**Problem:** Parallel requests refreshing the same expired JWT raced;\nthe second refresh invalidated the first, producing intermittent 401\nbursts under load.\n**Root cause:** No mutual exclusion around token rotation.\n**Fix:** Redis SETNX lock keyed by user-id around refresh\n(commit 8f3ab21). 50 ms retry, 5 s TTL.\n**Gotchas:** Lock TTL must exceed p99 refresh latency; don't hold the\nlock across network calls to the IdP.","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\06\\2026-06-16-jwt-refresh-race.md"},{"id":"2026-06-16-redis-lock-pattern","title":"Redis SETNX lock pattern for cross-instance mutual exclusion","type":"strategy","status":"active","confidence":"high","q_value":0.61,"repos":"api-core,worker-jobs","entities":"redis,concurrency","files":"src/lib/redlock.ts","links":"[[2026-06-16-jwt-refresh-race]]","source_commit":"2c91f04","created":"2026-06-16","last_used":"2026-07-04","last_validated":"2026-06-22","access_count":6,"body":"**Pattern:** For short critical sections spanning app instances, use a\nsingle-key Redis SETNX lock (`lock:<domain>:<id>`) with PX TTL and a\nrandom token checked on release, not full Redlock, one Redis is\nenough at our scale.\n**Where it worked:** token refresh, webhook dedupe, cron leader\nelection in worker-jobs.\n**Gotchas:** Always set TTL in the same command as the acquire\n(SET NX PX); release via compare-and-delete Lua script or a crashed\nholder's lock outlives it.","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\06\\2026-06-16-redis-lock-pattern.md"},{"id":"2026-06-18-legacy-webpack-alias","title":"Keep webpack \"@lib\" alias until Vite migration completes","type":"decision","status":"archived","confidence":"low","q_value":0.12,"repos":"web-app","entities":"webpack,build","files":"webpack.config.js","links":"","source_commit":"15b8d3a","created":"2026-06-18","last_used":"2026-06-18","last_validated":"2026-06-18","access_count":1,"body":"**Decision:** Keep the `@lib → src/lib` webpack alias during the Vite\nmigration so both bundlers resolve imports identically.\n**Rationale:** Rewriting 400+ imports mid-migration doubles review\nsurface.\n**Superseded:** Vite migration finished 2026-07-01; alias removed with\nwebpack.config.js. Archived by consolidator (Q 0.12 < 0.20, unused).","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\06\\2026-06-18-legacy-webpack-alias.md"},{"id":"2026-06-20-ci-flaky-playwright","title":"Playwright CI flakes from shared dev-server port collisions","type":"recovery","status":"active","confidence":"med","q_value":0.31,"repos":"web-app","entities":"ci,playwright","files":"playwright.config.ts,.github/workflows/e2e.yml","links":"","source_commit":"77d1e02","created":"2026-06-20","last_used":"2026-06-24","last_validated":"2026-06-20","access_count":2,"body":"**Problem:** e2e jobs flaked ~15% with ECONNREFUSED; two matrix shards\nraced for port 3000.\n**Root cause:** `webServer.port` hardcoded; shards shared a runner.\n**Fix:** Per-shard port `3000 + SHARD_INDEX` in playwright.config.ts\nand `reuseExistingServer: false` in CI (commit 77d1e02).\n**Gotchas:** Locally `reuseExistingServer: true` is still wanted; gate\non `process.env.CI`.","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\06\\2026-06-20-ci-flaky-playwright.md"},{"id":"2026-06-24-api-error-envelope","title":"All API errors use the {error:{code,message,details}} envelope","type":"convention","status":"active","confidence":"high","q_value":0.72,"repos":"api-core,web-app","entities":"api,http","files":"src/http/errors.ts","links":"","source_commit":"a90cc17","created":"2026-06-24","last_used":"2026-07-06","last_validated":"2026-07-03","access_count":7,"body":"**Convention:** Every non-2xx response body is\n`{ \"error\": { \"code\": string, \"message\": string, \"details\"?: object } }`.\n`code` is a stable machine-readable slug (SCREAMING_SNAKE), `message`\nis human-readable and safe to display.\n**Enforced by:** `httpError()` helper in src/http/errors.ts, never\nhand-build error JSON.\n**Why:** web-app's global fetch wrapper switches on `error.code`;\nad-hoc shapes silently fall through to the generic toast.","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\06\\2026-06-24-api-error-envelope.md"},{"id":"2026-07-01-pg-jsonb-index","title":"GIN jsonb_path_ops index makes report filters 40x faster","type":"optimization","status":"needs-review","confidence":"med","q_value":0.55,"repos":"api-core","entities":"postgres,jsonb","files":"src/db/reports.ts,migrations/0042_reports_gin.sql","links":"","source_commit":"4e77aa9","created":"2026-07-01","last_used":"2026-07-05","last_validated":"2026-07-01","access_count":3,"body":"**Problem:** `/reports?filter=` queries scanned 2M rows; p95 was 8 s.\n**Fix:** `CREATE INDEX ... USING GIN (payload jsonb_path_ops)` +\nrewrite filters to `@>` containment (commit 4e77aa9). p95 → 200 ms.\n**Gotchas:** jsonb_path_ops only accelerates `@>`, not `?` existence\nchecks, keep filter builders on containment.\n**Needs review:** src/db/reports.ts changed after this was written\n(commit b41c9de), verify the filter builder still uses `@>`.","path":"C:\\Users\\kirti\\AppData\\Local\\Temp\\claude\\C--Users-kirti-Music-unified-mem\\e29877dd-b8c9-4f34-96e2-00efe5d1e45d\\scratchpad\\pristine-vault\\notes\\2026\\07\\2026-07-01-pg-jsonb-index.md"}],"sessions":[{"id":"s14","ts":"2026-07-07T14:02:00","repo":"api-core","outcome":"success","tokens_injected":2100,"summary":"Token refresh under load test","demo":1},{"id":"s13","ts":"2026-07-05T09:44:00","repo":"api-core","outcome":"failure","tokens_injected":1800,"summary":"Reports filter regression after refactor","demo":1},{"id":"s12","ts":"2026-07-04T15:10:00","repo":"worker-jobs","outcome":"success","tokens_injected":1000,"summary":"Cron leader election lock","demo":1},{"id":"s11","ts":"2026-07-03T11:55:00","repo":"web-app","outcome":"success","tokens_injected":1300,"summary":"Error toast switches on error.code","demo":1},{"id":"s10","ts":"2026-07-02T10:20:00","repo":"api-core","outcome":"success","tokens_injected":2000,"summary":"GIN index for report filters","demo":1},{"id":"s09","ts":"2026-06-30T13:15:00","repo":"api-core","outcome":"indeterminate","tokens_injected":1100,"summary":"Investigate slow /reports endpoint","demo":1},{"id":"s08","ts":"2026-06-28T09:34:00","repo":"auth-service","outcome":"success","tokens_injected":1600,"summary":"Rotate signing keys without downtime","demo":1},{"id":"s07","ts":"2026-06-26T16:02:00","repo":"api-core","outcome":"success","tokens_injected":2100,"summary":"Rate-limit login attempts","demo":1},{"id":"s05","ts":"2026-06-25T14:22:00","repo":"api-core","outcome":"success","tokens_injected":1900,"summary":"Add refund endpoint w/ error envelope","demo":1},{"id":"s06","ts":"2026-06-24T10:48:00","repo":"web-app","outcome":"success","tokens_injected":1500,"summary":"Playwright shard ports per index","demo":1},{"id":"s04","ts":"2026-06-21T11:30:00","repo":"worker-jobs","outcome":"success","tokens_injected":1200,"summary":"Webhook dedupe with shared lock helper","demo":1},{"id":"s03","ts":"2026-06-20T09:05:00","repo":"web-app","outcome":"failure","tokens_injected":1700,"summary":"Debug e2e matrix flakes","demo":1},{"id":"s02","ts":"2026-06-18T15:40:00","repo":"web-app","outcome":"indeterminate","tokens_injected":900,"summary":"Explore Vite migration plan","demo":1},{"id":"s01","ts":"2026-06-17T10:12:00","repo":"api-core","outcome":"success","tokens_injected":1400,"summary":"Fix intermittent 401s on token refresh","demo":1}],"injections":[{"session_id":"s01","note_id":"2026-06-16-jwt-refresh-race","rank":1,"score":0.58,"demo":1},{"session_id":"s01","note_id":"2026-06-16-redis-lock-pattern","rank":2,"score":0.52,"demo":1},{"session_id":"s02","note_id":"2026-06-18-legacy-webpack-alias","rank":1,"score":0.44,"demo":1},{"session_id":"s03","note_id":"2026-06-20-ci-flaky-playwright","rank":1,"score":0.49,"demo":1},{"session_id":"s04","note_id":"2026-06-16-redis-lock-pattern","rank":1,"score":0.55,"demo":1},{"session_id":"s04","note_id":"2026-06-16-jwt-refresh-race","rank":2,"score":0.5,"demo":1},{"session_id":"s05","note_id":"2026-06-24-api-error-envelope","rank":1,"score":0.53,"demo":1},{"session_id":"s05","note_id":"2026-06-16-jwt-refresh-race","rank":2,"score":0.51,"demo":1},{"session_id":"s06","note_id":"2026-06-20-ci-flaky-playwright","rank":1,"score":0.47,"demo":1},{"session_id":"s07","note_id":"2026-06-16-redis-lock-pattern","rank":1,"score":0.54,"demo":1},{"session_id":"s07","note_id":"2026-06-16-jwt-refresh-race","rank":2,"score":0.53,"demo":1},{"session_id":"s07","note_id":"2026-06-24-api-error-envelope","rank":3,"score":0.49,"demo":1},{"session_id":"s08","note_id":"2026-06-16-jwt-refresh-race","rank":1,"score":0.6,"demo":1},{"session_id":"s09","note_id":"2026-06-24-api-error-envelope","rank":1,"score":0.5,"demo":1},{"session_id":"s10","note_id":"2026-07-01-pg-jsonb-index","rank":1,"score":0.56,"demo":1},{"session_id":"s10","note_id":"2026-06-24-api-error-envelope","rank":2,"score":0.51,"demo":1},{"session_id":"s11","note_id":"2026-06-24-api-error-envelope","rank":1,"score":0.55,"demo":1},{"session_id":"s12","note_id":"2026-06-16-redis-lock-pattern","rank":1,"score":0.53,"demo":1},{"session_id":"s13","note_id":"2026-07-01-pg-jsonb-index","rank":1,"score":0.52,"demo":1},{"session_id":"s13","note_id":"2026-06-24-api-error-envelope","rank":2,"score":0.48,"demo":1},{"session_id":"s14","note_id":"2026-06-16-jwt-refresh-race","rank":1,"score":0.62,"demo":1},{"session_id":"s14","note_id":"2026-06-16-redis-lock-pattern","rank":2,"score":0.54,"demo":1},{"session_id":"s14","note_id":"2026-06-24-api-error-envelope","rank":3,"score":0.5,"demo":1}],"q_history":[{"note_id":"2026-06-16-jwt-refresh-race","session_id":"s01","ts":"2026-06-17T10:12:00","old_q":0.5,"new_q":0.58,"contribution":0.5333333333333333,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-redis-lock-pattern","session_id":"s01","ts":"2026-06-17T10:12:00","old_q":0.5,"new_q":0.58,"contribution":0.5333333333333333,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-20-ci-flaky-playwright","session_id":"s03","ts":"2026-06-20T09:05:00","old_q":0.5,"new_q":0.44,"contribution":0.4,"reward":0,"op":"score","demo":1},{"note_id":"2026-06-16-redis-lock-pattern","session_id":"s04","ts":"2026-06-21T11:30:00","old_q":0.58,"new_q":0.63,"contribution":0.39682539682539686,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-24-api-error-envelope","session_id":"s05","ts":"2026-06-25T14:22:00","old_q":0.5,"new_q":0.6,"contribution":0.6666666666666667,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-jwt-refresh-race","session_id":"s05","ts":"2026-06-25T14:22:00","old_q":0.58,"new_q":0.62,"contribution":0.31746031746031744,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-20-ci-flaky-playwright","session_id":"s06","ts":"2026-06-24T10:48:00","old_q":0.44,"new_q":0.49,"contribution":0.2976190476190476,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-redis-lock-pattern","session_id":"s07","ts":"2026-06-26T16:02:00","old_q":0.63,"new_q":0.59,"contribution":0.36036036036036034,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-jwt-refresh-race","session_id":"s07","ts":"2026-06-26T16:02:00","old_q":0.62,"new_q":0.65,"contribution":0.2631578947368421,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-24-api-error-envelope","session_id":"s07","ts":"2026-06-26T16:02:00","old_q":0.6,"new_q":0.63,"contribution":0.25,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-jwt-refresh-race","session_id":"s08","ts":"2026-06-28T09:34:00","old_q":0.65,"new_q":0.72,"contribution":0.6666666666666667,"reward":1,"op":"score","demo":1},{"note_id":"2026-07-01-pg-jsonb-index","session_id":"s10","ts":"2026-07-02T10:20:00","old_q":0.5,"new_q":0.6,"contribution":0.6666666666666667,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-24-api-error-envelope","session_id":"s10","ts":"2026-07-02T10:20:00","old_q":0.63,"new_q":0.67,"contribution":0.36036036036036034,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-24-api-error-envelope","session_id":"s11","ts":"2026-07-03T11:55:00","old_q":0.67,"new_q":0.7000000000000001,"contribution":0.30303030303030304,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-redis-lock-pattern","session_id":"s12","ts":"2026-07-04T15:10:00","old_q":0.59,"new_q":0.6499999999999999,"contribution":0.4878048780487805,"reward":1,"op":"score","demo":1},{"note_id":"2026-07-01-pg-jsonb-index","session_id":"s13","ts":"2026-07-05T09:44:00","old_q":0.6,"new_q":0.5499999999999999,"contribution":0.2777777777777778,"reward":0,"op":"score","demo":1},{"note_id":"2026-06-16-jwt-refresh-race","session_id":"s14","ts":"2026-07-07T14:02:00","old_q":0.72,"new_q":0.78,"contribution":0.7142857142857142,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-16-redis-lock-pattern","session_id":"s14","ts":"2026-07-07T14:02:00","old_q":0.6499999999999999,"new_q":0.6099999999999999,"contribution":0.3809523809523809,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-24-api-error-envelope","session_id":"s14","ts":"2026-07-07T14:02:00","old_q":0.7000000000000001,"new_q":0.7200000000000001,"contribution":0.22222222222222227,"reward":1,"op":"score","demo":1},{"note_id":"2026-06-20-ci-flaky-playwright","session_id":null,"ts":"2026-06-28T03:00:00","old_q":0.49,"new_q":0.41,"contribution":null,"reward":null,"op":"decay","demo":1},{"note_id":"2026-06-18-legacy-webpack-alias","session_id":null,"ts":"2026-06-28T03:00:00","old_q":0.5,"new_q":0.36,"contribution":null,"reward":null,"op":"decay","demo":1},{"note_id":"2026-06-20-ci-flaky-playwright","session_id":null,"ts":"2026-07-05T03:00:00","old_q":0.41,"new_q":0.30999999999999994,"contribution":null,"reward":null,"op":"decay","demo":1},{"note_id":"2026-06-18-legacy-webpack-alias","session_id":null,"ts":"2026-07-05T03:00:00","old_q":0.36,"new_q":0.12,"contribution":null,"reward":null,"op":"decay","demo":1}],"consolidations":[{"id":6,"ts":"2026-07-06T03:00:00","op":"archive","note_id":"2026-06-18-legacy-webpack-alias","detail":"Q 0.12 < 0.20 and unused 18 days; Vite migration completed → archived","diff":"--- notes/2026/06/2026-06-18-legacy-webpack-alias.md\n+++ notes/2026/06/2026-06-18-legacy-webpack-alias.md\n-status: active\n+status: archived\n+**Superseded:** Vite migration finished 2026-07-01; alias removed with\n+webpack.config.js. Archived by consolidator (Q 0.12 < 0.20, unused).","demo":1},{"id":5,"ts":"2026-07-05T03:00:00","op":"decay","note_id":"2026-06-20-ci-flaky-playwright","detail":"Unused 11 days: Q 0.41 → 0.31 (0.95^weeks)","diff":null,"demo":1},{"id":4,"ts":"2026-07-03T03:00:00","op":"verify","note_id":"2026-06-24-api-error-envelope","detail":"needs-review check passed: httpError() unchanged at HEAD, envelope shape intact → restored to active","diff":"--- notes/2026/06/2026-06-24-api-error-envelope.md\n+++ notes/2026/06/2026-06-24-api-error-envelope.md\n-last_validated: 2026-06-24\n+last_validated: 2026-07-03","demo":1},{"id":3,"ts":"2026-07-02T03:00:00","op":"invalidate","note_id":"2026-07-01-pg-jsonb-index","detail":"src/db/reports.ts changed since last_validated (commit b41c9de) → status: needs-review","diff":"--- notes/2026/07/2026-07-01-pg-jsonb-index.md\n+++ notes/2026/07/2026-07-01-pg-jsonb-index.md\n-status: active\n+status: needs-review\n+**Needs review:** src/db/reports.ts changed after this was written\n+(commit b41c9de), verify the filter builder still uses `@>`.","demo":1},{"id":2,"ts":"2026-06-29T03:00:00","op":"edit","note_id":"2026-06-16-jwt-refresh-race","detail":"Lock TTL updated 2s → 5s: p99 refresh latency grew past 2s after IdP region move (session s08)","diff":"--- notes/2026/06/2026-06-16-jwt-refresh-race.md\n+++ notes/2026/06/2026-06-16-jwt-refresh-race.md\n-**Fix:** Redis SETNX lock keyed by user-id around refresh\n-(commit 8f3ab21). 50 ms retry, 2 s TTL.\n+**Fix:** Redis SETNX lock keyed by user-id around refresh\n+(commit 8f3ab21). 50 ms retry, 5 s TTL.\n-last_validated: 2026-06-16\n+last_validated: 2026-06-29","demo":1},{"id":1,"ts":"2026-06-22T03:00:00","op":"merge","note_id":"2026-06-16-redis-lock-pattern","detail":"Merged near-duplicate 2026-06-21-redis-setnx-lock (similarity 0.91); kept richest detail, union entities, max Q","diff":"--- notes/2026/06/2026-06-21-redis-setnx-lock.md (duplicate, removed)\n+++ notes/2026/06/2026-06-16-redis-lock-pattern.md\n-entities: [redis]\n+entities: [redis, concurrency]\n-**Pattern:** Use SETNX for locks.\n+**Pattern:** For short critical sections spanning app instances, use a\n+single-key Redis SETNX lock (`lock:<domain>:<id>`) with PX TTL and a\n+random token checked on release, not full Redlock, one Redis is\n+enough at our scale.\n+**Where it worked:** token refresh, webhook dedupe, cron leader\n+election in worker-jobs.","demo":1}],"metrics":[{"date":"2026-06-16","active":2,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":2,"demo":1},{"date":"2026-06-17","active":2,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-18","active":3,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-06-19","active":3,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-20","active":4,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-06-21","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":2,"demo":1},{"date":"2026-06-22","active":4,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-23","active":4,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":2,"demo":1},{"date":"2026-06-24","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-06-25","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-26","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":3,"demo":1},{"date":"2026-06-27","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-28","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-06-29","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-06-30","active":5,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-07-01","active":6,"needs_review":0,"archived":0,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-07-02","active":5,"needs_review":1,"archived":0,"stale_retrievals":1,"retrievals":2,"demo":1},{"date":"2026-07-03","active":5,"needs_review":1,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-07-04","active":5,"needs_review":1,"archived":0,"stale_retrievals":0,"retrievals":1,"demo":1},{"date":"2026-07-05","active":5,"needs_review":1,"archived":0,"stale_retrievals":0,"retrievals":2,"demo":1},{"date":"2026-07-06","active":4,"needs_review":1,"archived":1,"stale_retrievals":0,"retrievals":0,"demo":1},{"date":"2026-07-07","active":4,"needs_review":1,"archived":1,"stale_retrievals":0,"retrievals":3,"demo":1}]}</script>
+</head>
+<body>
+<header>
+  <h1>unified-mem</h1>
+  <span class="live">static demo · fictional seed data · <a href="https://github.com/kirti34n/unified-mem" style="color:inherit">get the real thing</a></span>
+  <span class="hstats" id="hstats"></span>
+  <span class="updated" id="updated"></span>
+</header>
+<div class="layout">
+  <nav id="nav">
+    <a href="#sessions">Sessions</a>
+    <a href="#graph">Notes graph</a>
+    <a href="#q">Q evolution</a>
+    <a href="#consolidation">Consolidation</a>
+    <a href="#metrics">Metrics</a>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="tip"></div>
+<script src="vendor/prism.min.js" data-manual></script>
+<script src="vendor/prism-diff.min.js"></script>
+<script src="vendor/prism-diff-highlight.min.js"></script>
+<script>
+'use strict';
+const SLOTS=['#3987e5','#199e70','#c98500','#008300','#9085e9','#e66767'];
+const TYPES=['recovery','strategy','optimization','decision','convention']; // fixed slot order
+const typeColor=t=>SLOTS[TYPES.indexOf(t)]??'#898781';
+let S=null,fp='',view=(location.hash||'#sessions').slice(1);
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const shortName=id=>id.replace(/^\d{4}-\d{2}-\d{2}-/,'');
+const fmtTs=ts=>new Date(ts).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+const tip=$('#tip');
+function showTip(html,x,y){tip.innerHTML=html;tip.style.display='block';
+  const w=tip.offsetWidth,h=tip.offsetHeight;
+  tip.style.left=Math.min(x+14,innerWidth-w-10)+'px';
+  tip.style.top=Math.min(y+14,innerHeight-h-10)+'px';}
+function hideTip(){tip.style.display='none'}
+
+async function poll(){
+  try{
+    S=window.__STATE__;
+    $('#updated').textContent='updated '+new Date().toLocaleTimeString();
+    const f=JSON.stringify([S.summary,S.sessions.length,S.injections.length,S.q_history.length,S.consolidations.length]);
+    $('#hstats').innerHTML=`vault: <b>${S.summary.active}</b> active · <b>${S.summary.needs_review}</b> needs-review · <b>${S.summary.archived}</b> archived · stale rate <b>${(S.summary.stale_rate*100).toFixed(1)}%</b>`;
+    if(f!==fp){fp=f;render();}
+  }catch(e){$('#updated').textContent='server unreachable';}
+}
+function setView(v){view=v;render();
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+v));}
+addEventListener('hashchange',()=>setView(location.hash.slice(1)||'sessions'));
+
+function render(){
+  if(!S)return;
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash==='#'+view));
+  const m=$('#main');hideTip();
+  ({sessions:rSessions,graph:rGraph,q:rQ,consolidation:rCons,metrics:rMetrics}[view]||rSessions)(m);
+}
+
+/* ---------- Sessions ---------- */
+function rSessions(m){
+  const notesById=Object.fromEntries(S.notes.map(n=>[n.id,n]));
+  const injBySess={},dq={};
+  S.injections.forEach(i=>(injBySess[i.session_id]??=[]).push(i));
+  S.q_history.filter(q=>q.op==='score'&&q.session_id).forEach(q=>dq[q.session_id+'|'+q.note_id]=q.new_q-q.old_q);
+  const icon={success:'✓',failure:'✗',indeterminate:'○'};
+  m.innerHTML=`<h2>Sessions</h2><div class="sub">Every Claude Code session: what the vault injected, and the Q-value each note earned from the outcome. Sessions marked LIVE came from real hooks, not seed data.</div>`+
+  S.sessions.map(s=>{
+    const inj=(injBySess[s.id]||[]).sort((a,b)=>a.rank-b.rank);
+    return `<div class="card"><div class="sess-head">
+      <span class="when">${fmtTs(s.ts)}</span>
+      <span class="chip">${esc(s.repo)}</span>
+      <span class="badge ${s.outcome}">${icon[s.outcome]||'○'} ${s.outcome}</span>
+      ${s.demo?'':'<span class="tag-live">LIVE</span>'}
+      <span class="toks">${(s.tokens_injected??0).toLocaleString()} tok injected</span></div>
+      <div class="sess-sum">${esc(s.summary||'')}</div>`+
+      inj.map(i=>{const n=notesById[i.note_id];const d=dq[s.id+'|'+i.note_id];
+        const cls=d>0?'up':d<0?'down':'none';
+        const dtxt=d==null?'·':(d>0?'▲ +':'▼ −')+Math.abs(d).toFixed(2);
+        return `<div class="inj"><span class="rank">${i.rank}</span>
+          <span class="swatch" style="background:${typeColor(n?.type)}"></span>
+          <span>${esc(n?.title||i.note_id)}</span>
+          <span class="score">score ${i.score.toFixed(2)}</span>
+          <span class="dq ${cls}" title="Q change from this session's outcome">${dtxt}</span></div>`;}).join('')+
+    `</div>`;}).join('');
+}
+
+/* ---------- Notes graph ---------- */
+function rGraph(m){
+  m.innerHTML=`<h2>Notes graph</h2><div class="sub">Atomic notes (colored by type, sized by Q-value) linked to shared entities and to each other via wikilinks. Amber ring = needs-review; gray = archived. Hover a node for details.</div>
+  <div class="card"><canvas id="graph"></canvas>
+  <div class="legend">${TYPES.map((t,i)=>`<span class="key"><span class="sw" style="background:${SLOTS[i]}"></span>${t}</span>`).join('')}
+  <span class="key"><span class="sw" style="background:none;border:1.5px solid var(--muted);border-radius:50%"></span>entity</span>
+  <span class="key"><span class="sw" style="background:none;border:2px solid var(--warn);border-radius:50%"></span>needs-review</span></div></div>`;
+  const cv=$('#graph'),ctx=cv.getContext('2d');
+  const W=cv.width=cv.clientWidth*devicePixelRatio,H=cv.height=520*devicePixelRatio;
+  ctx.scale(devicePixelRatio,devicePixelRatio);
+  const w=cv.clientWidth,h=520;
+  // build nodes deterministically
+  const nodes=[],edges=[],byId={};
+  const ents=[...new Set(S.notes.flatMap(n=>(n.entities||'').split(',').filter(Boolean)))];
+  S.notes.forEach((n,i)=>{const a=i/S.notes.length*2*Math.PI;
+    nodes.push(byId[n.id]={id:n.id,note:n,x:w/2+170*Math.cos(a),y:h/2+150*Math.sin(a),r:6+n.q_value*13});});
+  ents.forEach((e,i)=>{const a=i/ents.length*2*Math.PI+.4;
+    nodes.push(byId[e]={id:e,entity:true,x:w/2+70*Math.cos(a),y:h/2+60*Math.sin(a),r:4});});
+  S.notes.forEach(n=>{(n.entities||'').split(',').filter(Boolean).forEach(e=>edges.push([byId[n.id],byId[e]]));
+    (n.links||'').split(',').forEach(l=>{const t=l.replace(/[\[\]"']/g,'').trim();
+      if(byId[t])edges.push([byId[n.id],byId[t]]);});});
+  for(let it=0;it<400;it++){ // simple force sim
+    for(const a of nodes)for(const b of nodes){if(a===b)continue;
+      let dx=a.x-b.x,dy=a.y-b.y,d2=Math.max(dx*dx+dy*dy,25),f=Math.min(6000/d2,6);
+      const d=Math.sqrt(d2);a.x+=dx/d*f;a.y+=dy/d*f;}
+    for(const[a,b]of edges){let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-110)*.03;
+      a.x+=dx/d*f;a.y+=dy/d*f;b.x-=dx/d*f;b.y-=dy/d*f;}
+    for(const n of nodes){n.x+=(w/2-n.x)*.006;n.y+=(h/2-n.y)*.006;
+      n.x=Math.max(40,Math.min(w-40,n.x));n.y=Math.max(40,Math.min(h-40,n.y));}}
+  function draw(hover){
+    ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle='#2c2c2a';ctx.lineWidth=1;
+    for(const[a,b]of edges){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+    for(const n of nodes){
+      ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,7);
+      if(n.entity){ctx.strokeStyle='#898781';ctx.lineWidth=1.5;ctx.fillStyle='#1a1a19';ctx.fill();ctx.stroke();}
+      else{const st=n.note.status;
+        ctx.fillStyle=st==='archived'?'#52514e':typeColor(n.note.type);ctx.fill();
+        ctx.strokeStyle='#1a1a19';ctx.lineWidth=2;ctx.stroke(); // surface ring
+        if(st==='needs-review'){ctx.beginPath();ctx.arc(n.x,n.y,n.r+3.5,0,7);
+          ctx.strokeStyle='#fab219';ctx.lineWidth=2;ctx.stroke();}}
+      if(n===hover){ctx.beginPath();ctx.arc(n.x,n.y,n.r+6,0,7);ctx.strokeStyle='#ffffff44';ctx.lineWidth=1;ctx.stroke();}
+      ctx.fillStyle=n.entity?'#898781':'#c3c2b7';
+      ctx.font=(n.entity?'10px':'11px')+' system-ui';ctx.textAlign='center';
+      ctx.fillText(n.entity?n.id:shortName(n.id),n.x,n.y+n.r+13);}}
+  draw();
+  cv.onmousemove=e=>{const b=cv.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;
+    const n=nodes.find(n=>(n.x-x)**2+(n.y-y)**2<(n.r+7)**2);
+    draw(n);
+    if(!n)return hideTip();
+    showTip(n.entity?`<b>${esc(n.id)}</b><br>entity hub`:
+      `<b>${esc(n.note.title)}</b><br>type: ${n.note.type} · status: ${n.note.status}<br>Q ${n.note.q_value.toFixed(2)} · used ${n.note.access_count}× · repos: ${esc(n.note.repos)}`,e.clientX,e.clientY);};
+  cv.onmouseleave=()=>{hideTip();draw();};
+}
+
+/* ---------- shared line chart ---------- */
+function lineChart(el,{series,yMax=1,yTicks,h=300,fmtY=v=>v,fmtX}){
+  const w=el.clientWidth||960,pad={l:42,r:150,t:14,b:26};
+  const xs=series.flatMap(s=>s.pts.map(p=>p.x));
+  const x0=Math.min(...xs),x1=Math.max(...xs);
+  const X=x=>pad.l+(x-x0)/((x1-x0)||1)*(w-pad.l-pad.r);
+  const Y=y=>pad.t+(1-y/yMax)*(h-pad.t-pad.b);
+  fmtX??=x=>new Date(x).toLocaleDateString([],{month:'short',day:'numeric'});
+  let g='';
+  yTicks.forEach(t=>{g+=`<line x1="${pad.l}" x2="${w-pad.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="#2c2c2a"/>`+
+    `<text class="tick" x="${pad.l-8}" y="${Y(t)+4}" text-anchor="end">${fmtY(t)}</text>`;});
+  const nx=5;for(let i=0;i<=nx;i++){const x=x0+(x1-x0)*i/nx;
+    g+=`<text class="tick" x="${X(x)}" y="${h-8}" text-anchor="middle">${fmtX(x)}</text>`;}
+  g+=`<line x1="${pad.l}" x2="${w-pad.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="#383835"/>`;
+  series.forEach(s=>{
+    g+=`<polyline fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${s.pts.map(p=>X(p.x)+','+Y(p.y)).join(' ')}"/>`;
+    const e=s.pts[s.pts.length-1];
+    g+=`<circle cx="${X(e.x)}" cy="${Y(e.y)}" r="4.5" fill="${s.color}" stroke="#1a1a19" stroke-width="2"/>`;});
+  // direct end labels, collision-avoiding (CVD floor band → labels + legend mandatory)
+  const placed=[];
+  [...series].sort((a,b)=>b.pts.at(-1).y-a.pts.at(-1).y).forEach(s=>{
+    const e=s.pts.at(-1),y=Y(e.y);
+    if(placed.some(p=>Math.abs(p-y)<13))return;
+    placed.push(y);
+    g+=`<circle cx="${w-pad.r+10}" cy="${y-4}" r="4" fill="${s.color}"/><text x="${w-pad.r+18}" y="${y}" fill="#c3c2b7">${esc(s.name)} ${fmtY(e.y)}</text>`;});
+  g+=`<line id="xh" class="crosshair" y1="${pad.t}" y2="${h-pad.b}" x1="-9" x2="-9"/>`;
+  g+=`<rect x="${pad.l}" y="${pad.t}" width="${w-pad.l-pad.r}" height="${h-pad.t-pad.b}" fill="transparent" id="ov"/>`;
+  el.innerHTML=`<svg width="${w}" height="${h}">${g}</svg>`;
+  const ov=el.querySelector('#ov'),xh=el.querySelector('#xh');
+  ov.addEventListener('mousemove',e=>{
+    const r=el.querySelector('svg').getBoundingClientRect(),px=e.clientX-r.left;
+    const t=x0+(px-pad.l)/((w-pad.l-pad.r)||1)*(x1-x0);
+    xh.setAttribute('x1',px);xh.setAttribute('x2',px);
+    const rows=series.map(s=>{const p=s.pts.reduce((b,p)=>Math.abs(p.x-t)<Math.abs(b.x-t)?p:b);
+      return `<span style="color:${s.color}">●</span> ${esc(s.name)}: <b>${fmtY(p.y)}</b>`;}).join('<br>');
+    showTip(`${fmtX(t)}<br>${rows}`,e.clientX,e.clientY);});
+  ov.addEventListener('mouseleave',()=>{hideTip();xh.setAttribute('x1',-9);xh.setAttribute('x2',-9);});
+}
+
+/* ---------- Q evolution ---------- */
+function rQ(m){
+  m.innerHTML=`<h2>Q evolution</h2><div class="sub">Learned usefulness per note over time. Rising = the note keeps helping sessions succeed (R2/R3); sagging = weekly decay of unused notes (R7). Flat-lining into the floor ends in archive.</div>
+  <div class="card"><div id="qc"></div><div class="legend" id="ql"></div>
+  <details><summary>Data table · every Q update</summary><table id="qt"></table></details></div>`;
+  const ids=[...new Set(S.notes.map(n=>n.id))].sort();
+  const series=ids.map((id,i)=>{
+    const ev=S.q_history.filter(q=>q.note_id===id).sort((a,b)=>a.ts.localeCompare(b.ts));
+    const start=new Date(id.slice(0,10)).getTime();
+    const pts=[{x:start,y:.5},...ev.map(q=>({x:new Date(q.ts).getTime(),y:q.new_q}))].sort((a,b)=>a.x-b.x);
+    return {name:shortName(id),color:SLOTS[i%6],pts,id};
+  }).filter(s=>s.pts.length>1);
+  lineChart($('#qc'),{series,yMax:1,yTicks:[0,.2,.4,.6,.8,1],fmtY:v=>v.toFixed(2)});
+  const st=Object.fromEntries(S.notes.map(n=>[n.id,n.status]));
+  $('#ql').innerHTML=series.map(s=>`<span class="key"><span class="ln" style="background:${s.color}"></span>${esc(s.name)}${st[s.id]!=='active'?` (${st[s.id]})`:''}</span>`).join('');
+  $('#qt').innerHTML='<tr><th>when</th><th>note</th><th>op</th><th>Q</th><th>reward</th></tr>'+
+    S.q_history.slice().sort((a,b)=>b.ts.localeCompare(a.ts)).map(q=>
+    `<tr><td>${fmtTs(q.ts)}</td><td>${shortName(q.note_id)}</td><td>${q.op}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'·'}</td></tr>`).join('');
+}
+
+/* ---------- Consolidation ---------- */
+function rCons(m){
+  const notesById=Object.fromEntries(S.notes.map(n=>[n.id,n]));
+  const icon={merge:'⇄',edit:'✎',invalidate:'⚠',verify:'✓',decay:'↓',archive:'⌫'};
+  m.innerHTML=`<h2>Consolidation log</h2><div class="sub">The nightly "dream" job (R6): merges, edits, git-diff invalidations, verifications, decay, archival. Every content change is shown as the exact diff applied to the note.</div>`+
+  S.consolidations.map(c=>`<div class="card">
+    <div class="sess-head"><span class="op ${c.op}">${icon[c.op]||''} ${c.op.toUpperCase()}</span>
+    <span class="when">${fmtTs(c.ts)}</span>
+    <span class="chip">${esc(shortName(c.note_id||''))}</span></div>
+    <div class="sess-sum">${esc(c.detail)}</div>
+    ${c.diff?`<pre class="diff-highlight"><code class="language-diff">${esc(c.diff)}</code></pre>`:''}
+    </div>`).join('');
+  Prism.highlightAllUnder(m);
+}
+
+/* ---------- Metrics ---------- */
+function spark(vals,w=84,h=26){
+  const mx=Math.max(...vals)||1,mn=Math.min(...vals);
+  const p=vals.map((v,i)=>`${i/(vals.length-1)*w},${h-2-(v-mn)/((mx-mn)||1)*(h-6)}`);
+  return `<svg width="${w}" height="${h}"><polyline fill="none" stroke="#898781" stroke-width="1.5" points="${p.join(' ')}"/><circle cx="${p.at(-1).split(',')[0]}" cy="${p.at(-1).split(',')[1]}" r="3" fill="#3987e5"/></svg>`;
+}
+function rMetrics(m){
+  const M=S.metrics,last=M.at(-1)||{},wk=M.at(-8)||last;
+  const stalePct=S.summary.stale_rate*100;
+  const staleOk=stalePct<5;
+  const dAct=last.active-wk.active;
+  m.innerHTML=`<h2>Metrics</h2><div class="sub">The accuracy targets from PLAN §6 · vault size must plateau (R7), stale retrievals stay under 5% (R9).</div>
+  <div class="tiles">
+    <div class="card tile"><div class="lbl">Active notes</div><div class="val">${S.summary.active}</div>
+      <div class="delta" style="color:${dAct>=0?'var(--good)':'var(--crit)'}">${dAct>=0?'+':''}${dAct} vs last week</div>${spark(M.map(d=>d.active))}</div>
+    <div class="card tile"><div class="lbl">Needs review</div><div class="val">${S.summary.needs_review}</div>
+      <div class="note">${S.summary.needs_review?'<span style="color:var(--warn)">⚠ awaiting verification</span>':'✓ none pending'}</div></div>
+    <div class="card tile"><div class="lbl">Stale retrieval rate</div><div class="val">${stalePct.toFixed(1)}%</div>
+      <div class="delta" style="color:${staleOk?'var(--good)':'var(--crit)'}">${staleOk?'✓ under':'✗ over'} 5% target</div></div>
+    <div class="card tile"><div class="lbl">Mean Q (non-archived)</div><div class="val">${S.summary.mean_q.toFixed(2)}</div>
+      <div class="note">${S.summary.retrievals} total retrievals logged</div></div>
+    <div class="card tile"><div class="lbl">Abstention rate</div><div class="val">${((S.summary.abstention_rate??0)*100).toFixed(0)}%</div>
+      <div class="note">sessions injected nothing · ${S.summary.gaps??0} gap prompts logged</div></div>
+    <div class="card tile"><div class="lbl">Spend today</div><div class="val">$${(S.summary.spend_today_usd??0).toFixed(2)}</div>
+      <div class="note">pipeline LLM calls · budget $${S.summary.daily_budget_usd??'?'} / day</div></div>
+  </div>
+  <div class="card"><h2>Vault size trend</h2><div class="sub">Healthy shape: growth then plateau · linear growth means forgetting is broken.</div>
+  <div id="mt"></div><div class="legend" id="ml"></div>
+  <details><summary>Data table · daily metrics</summary><table id="mtab"></table></details></div>`;
+  const mk=(name,color,key)=>({name,color,pts:M.map(d=>({x:new Date(d.date).getTime(),y:d[key]}))});
+  const series=[mk('active','#3987e5','active'),mk('needs-review','#199e70','needs_review'),mk('archived','#c98500','archived')];
+  const ymax=Math.max(4,...M.map(d=>d.active))+1;
+  lineChart($('#mt'),{series,yMax:ymax,yTicks:Array.from({length:ymax+1},(_,i)=>i).filter(i=>i%2===0),h:260,fmtY:v=>Math.round(v)});
+  $('#ml').innerHTML=series.map(s=>`<span class="key"><span class="ln" style="background:${s.color}"></span>${s.name}</span>`).join('');
+  $('#mtab').innerHTML='<tr><th>date</th><th>active</th><th>needs-review</th><th>archived</th><th>retrievals</th><th>stale</th></tr>'+
+    M.map(d=>`<tr><td>${d.date}</td><td>${d.active}</td><td>${d.needs_review}</td><td>${d.archived}</td><td>${d.retrievals}</td><td>${d.stale_retrievals}</td></tr>`).join('');
+}
+
+document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>setView(a.hash.slice(1)));
+poll();
+</script>
+</body>
+</html>
