@@ -112,8 +112,8 @@ export function reindexNotes(db) {
     up.run(note.id, note.title ?? '', note.type ?? '', note.status ?? 'active',
       note.confidence ?? 'med', Number(note.q_value ?? 0.5), csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
-      note.id.slice(0, 10), note.last_used, note.last_validated,
-      Number(note.access_count ?? 0), note.body, p);
+      note.id.slice(0, 10), note.last_used ?? null, note.last_validated ?? null,
+      Number(note.access_count ?? 0), note.body ?? '', p);
     n++;
   }
   // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers)
