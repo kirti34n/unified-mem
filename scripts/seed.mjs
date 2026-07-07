@@ -1,9 +1,9 @@
-// Seeds vault.db: writes the six demo note FILES (fresh clones have none:
+// Seeds vault.db: writes the seven demo note FILES (fresh clones have none:
 // notes/ is user data and gitignored), indexes them, then inserts 3 weeks of
 // DEMO history (sessions, injections, Q trajectories, consolidation diffs,
 // daily metrics) so the dashboard shows the full loop before real data flows.
 // Idempotent: wipes demo rows first, never overwrites an existing note file.
-// `--purge-demo` wipes rows AND deletes exactly these six note files.
+// `--purge-demo` wipes rows AND deletes exactly these demo note files.
 import { unlinkSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { openDb, reindexNotes, NOTES_DIR } from './vault.mjs';
@@ -135,6 +135,26 @@ rewrite filters to \`@>\` containment (commit 4e77aa9). p95 → 200 ms.
 checks, keep filter builders on containment.
 **Needs review:** src/db/reports.ts changed after this was written
 (commit b41c9de), verify the filter builder still uses \`@>\`.
+`,
+  '2026-06-15-demo-prefers-pnpm': `---
+id: 2026-06-15-demo-prefers-pnpm
+type: preference
+title: Prefers pnpm over npm in all projects
+entities: []
+repos: []
+files: []
+source_commit: user
+confidence: high
+q_value: 0.60
+access_count: 0
+last_used: null
+last_validated: 2026-06-15
+status: active
+scope: personal
+trust: user-explicit
+links: []
+---
+Use pnpm, never npm or yarn, for installing and running scripts in every project.
 `,
   '2026-06-18-legacy-webpack-alias': `---
 id: 2026-06-18-legacy-webpack-alias

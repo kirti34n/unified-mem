@@ -16,6 +16,7 @@
 - [x] Auto-linked knowledge graph (co-file and shared-entity edges, no embeddings)
 - [x] Telemetry: abstention rate on the dashboard, vault-gap log for unmatched technical prompts
 - [x] Provenance stamping on every note (author, machine, session, trust class)
+- [x] Personal layer: pinned preferences (vault_remember MCP tool, remember.mjs CLI) and hash-tracked reference docs (ingest.mjs), scope-aware schema with reflector poisoning boundary
 - [ ] Team sharing via git pull requests: deferred until a second machine or contributor exists. Recipe is research-validated and ready: one-note-per-file (already true), PR review gates for promoted notes, machine-local Q-scores in a sidecar so shared files stay merge-clean
 - [ ] Utilization calibration: deferred. Citation telemetry plus a nightly sampled leave-one-out ablation through the existing harness (the accepted causal measure of whether injected notes changed behavior)
 - [ ] Embeddings and MMR: deliberately skipped. Measured evidence says BM25 wins on technical vocabulary at this corpus size and top-k redundancy is near zero with atomic deduped notes. Revisit only if logged retrieval misses accumulate.

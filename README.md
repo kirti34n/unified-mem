@@ -30,6 +30,7 @@ Open http://localhost:7777: injections per session, Q-scores learning, staleness
 - **Cross-repo notes, injected just in time**: a fix discovered in `repo-A` surfaces in `repo-B` exactly when a prompt needs it; chatty prompts correctly inject nothing.
 - **Usefulness learned from real outcomes**: notes that keep helping rise; notes that stop contributing decay and are archived.
 - **Staleness detection against your actual code**: when a cited file changes, the note is re-verified against the current code and restored or retired.
+- **Your preferences and personal docs follow you**: say "remember that I prefer pnpm" (or `npm run remember`), and it is pinned into every future session in every repo; ingested docs surface when a prompt matches them.
 
 ## How it works
 

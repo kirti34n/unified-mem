@@ -19,10 +19,11 @@ const fail = (step, r) => {
 };
 
 let r = run('scripts/seed.mjs');
-if (!/6 notes indexed/.test(r.stdout)) fail('seed (expected "6 notes indexed")', r);
+if (!/7 notes indexed/.test(r.stdout)) fail('seed (expected "7 notes indexed")', r);
 
 r = run('scripts/retrieve.mjs', JSON.stringify({ session_id: 'smoke-start', cwd: tmpdir() }));
 if (!r.stdout.includes('MEMORY CATALOG')) fail('session-start catalog', r);
+if (!r.stdout.includes('PERSONAL PREFERENCES')) fail('pinned preferences block (demo preference should pin in any cwd)', r);
 
 r = run('scripts/retrieve-prompt.mjs', JSON.stringify({
   session_id: 'smoke-p1', cwd: tmpdir(),

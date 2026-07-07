@@ -20,6 +20,8 @@ Copy `config.example.json` to `config.json` next to the tool; defaults apply for
 | `reflector_model` | sonnet | model that writes notes (quality matters here) |
 | `eval_model` / `verify_model` | haiku | cheap pinned models for eval, verification, judging |
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |
+| `personal_budget_chars` | `800` | budget for the pinned PERSONAL PREFERENCES block at session start |
+| `preference_cap` | `30` | warn above this many active preferences (each one is pinned into every session) |
 | `repos` | `{}` | name-to-local-path map powering staleness invalidation and repo cards |
 
 ## Environment variables
