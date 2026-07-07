@@ -16,7 +16,8 @@
     "consolidate": "node scripts/consolidate.mjs",
     "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
-    "remember": "node scripts/remember.mjs"
+    "remember": "node scripts/remember.mjs",
+    "ingest": "node scripts/ingest.mjs"
   },
   "dependencies": {}
 }
