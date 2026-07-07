@@ -43,7 +43,9 @@ try {
 
   // PERSONAL PREFERENCES: pinned, no similarity floor. Preferences apply in every
   // repo by definition; they are explicit user statements, not retrieved guesses.
-  const prefs = db.prepare("SELECT * FROM notes WHERE type='preference' AND status='active' ORDER BY q_value DESC, created DESC").all()
+  // Trust gate: only user-explicit notes may pin. A file written into notes/ by
+  // anything else (including demo seed data) never reaches every session.
+  const prefs = db.prepare("SELECT * FROM notes WHERE type='preference' AND status='active' AND trust='user-explicit' ORDER BY q_value DESC, created DESC").all()
     .filter(n => !seen.has(n.id));
   let pinned = '';
   const pinnedNotes = [];
@@ -68,8 +70,9 @@ try {
   // Relevance floor: injecting nothing beats injecting noise. A note must be
   // meaningfully relevant (sim >= start_min_sim, one shared token is not enough)
   // or have PROVEN high utility (q>=0.7) to ride along with the catalog.
+  // demo-seeded notes never ride the utility bypass into real sessions
   const top = scoreNotes(db, query)
-    .filter(n => (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id) && n.type !== 'preference');
+    .filter(n => (n.sim >= CONFIG.start_min_sim || (n.q_value >= 0.7 && n.trust !== 'demo')) && !seen.has(n.id) && n.type !== 'preference');
   if (top.length) out += '\nMost relevant notes for this repo right now:\n';
   for (const n of top) {
     const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]' : '';
@@ -88,6 +91,8 @@ try {
     .run(sessionId, ts, basename(cwd), 'indeterminate', Math.round(out.length / 4), hook.source || 'startup');
   const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,0)');
   const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
-  used.forEach((n, i) => { inj.run(sessionId, n.id, i + 1, n.score); touch.run(ts.slice(0, 10), n.id); });
+  // pinned preferences come from a plain SELECT and carry no score; node:sqlite
+  // rejects undefined binds, and one bad bind would kill logging for the session
+  used.forEach((n, i) => { inj.run(sessionId, n.id, i + 1, n.score ?? n.q_value ?? 0); touch.run(ts.slice(0, 10), n.id); });
 } catch (e) { hookDebugLog('retrieve', e); /* memory must never block a session */ }
 process.exit(0);

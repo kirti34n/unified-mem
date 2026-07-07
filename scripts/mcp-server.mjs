@@ -64,7 +64,7 @@ createInterface({ input: process.stdin }).on('line', line => {
           kind: args.kind === 'note' ? 'note' : 'preference',
           title: args.title, sessionId: 'mcp-explicit',
         });
-        return reply(id, { content: [{ type: 'text', text: `saved as ${noteId}; it will be available in every future session` }] });
+        return reply(id, { content: [{ type: 'text', text: args.kind === "note" ? `saved as ${noteId}; it will surface when a prompt matches it` : `saved as ${noteId}; it is pinned into every future session` }] });
       }
       return fail(id, -32602, `unknown tool: ${params?.name}`);
     } catch (e) { return fail(id, -32603, e.message); }

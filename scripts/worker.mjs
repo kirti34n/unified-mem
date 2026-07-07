@@ -62,7 +62,9 @@ function scoreSession(db, sessionId, outcome, text, repo = 'unknown') {
     .run(sessionId, new Date().toISOString(), repo, outcome, 'session from queue (no retrieve log)');
   if (outcome === 'indeterminate') return 0;
   const r = outcome === 'success' ? 1 : 0;
-  const injected = db.prepare('SELECT i.note_id, n.q_value, n.entities, n.title FROM injections i JOIN notes n ON n.id=i.note_id WHERE i.session_id=?').all(sessionId);
+  // preferences are exempt from Q updates: a failed session must not erode an
+  // explicit user statement (they are also exempt from decay, symmetrically)
+  const injected = db.prepare("SELECT i.note_id, n.q_value, n.entities, n.title FROM injections i JOIN notes n ON n.id=i.note_id WHERE i.session_id=? AND n.type != 'preference'").all(sessionId);
   const ts = new Date().toISOString();
   // contribution is measured against the ASSISTANT's own output only, the injected
   // note text appears in the transcript context, so matching the full transcript

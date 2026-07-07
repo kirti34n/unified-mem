@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, confidence TEXT,
   q_value REAL, repos TEXT, entities TEXT, files TEXT, links TEXT,
   source_commit TEXT, created TEXT, last_used TEXT, last_validated TEXT,
-  access_count INTEGER DEFAULT 0, body TEXT, path TEXT, scope TEXT DEFAULT 'shared'
+  access_count INTEGER DEFAULT 0, body TEXT, path TEXT, scope TEXT DEFAULT 'shared',
+  trust TEXT DEFAULT 'unknown'
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, ts TEXT, repo TEXT, outcome TEXT,
@@ -83,6 +84,7 @@ export function openDb() {
   db.exec('PRAGMA busy_timeout=5000;'); // per-connection: readers wait instead of SQLITE_BUSY
   db.exec(SCHEMA);
   try { db.exec("ALTER TABLE notes ADD COLUMN scope TEXT DEFAULT 'shared'"); } catch { } // migration for pre-P3 vaults
+  try { db.exec("ALTER TABLE notes ADD COLUMN trust TEXT DEFAULT 'unknown'"); } catch { } // trust gates pinning + utility bypass
   return db;
 }
 
@@ -123,8 +125,8 @@ export function* walkNotes(dir = NOTES_DIR) {
 export function reindexNotes(db) {
   const up = db.prepare(`INSERT OR REPLACE INTO notes
     (id,title,type,status,confidence,q_value,repos,entities,files,links,
-     source_commit,created,last_used,last_validated,access_count,body,path,scope)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     source_commit,created,last_used,last_validated,access_count,body,path,scope,trust)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let n = 0;
   for (const p of walkNotes()) {
     const note = parseNote(readFileSync(p, 'utf8'), p);
@@ -134,7 +136,7 @@ export function reindexNotes(db) {
       note.confidence ?? 'med', Number(note.q_value ?? 0.5), csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
       note.id.slice(0, 10), note.last_used ?? null, note.last_validated ?? null,
-      Number(note.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared');
+      Number(note.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared', note.trust ?? 'unknown');
     n++;
   }
   // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers).
@@ -220,7 +222,7 @@ export function updateNoteFile(db, id, changes) {
 
 // Minimal line diff: paired -/+ for changed lines (frontmatter edits keep line counts).
 export function makeDiff(path, before, after) {
-  const rel = path.replace(ROOT, '').replace(/\\/g, '/').replace(/^\//, '');
+  const rel = path.replace(VAULT, '').replace(ROOT, '').replace(/\\/g, '/').replace(/^\//, ''); // never leak absolute paths into diffs
   const a = before.split(/\r?\n/), b = after.split(/\r?\n/);
   const out = [`--- ${rel}`, `+++ ${rel}`];
   const len = Math.max(a.length, b.length);

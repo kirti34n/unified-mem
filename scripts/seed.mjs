@@ -26,6 +26,7 @@ access_count: 9
 last_used: 2026-07-07
 last_validated: 2026-06-29
 status: active
+trust: demo
 links: ["[[2026-06-16-redis-lock-pattern]]"]
 ---
 **Problem:** Parallel requests refreshing the same expired JWT raced;
@@ -51,6 +52,7 @@ access_count: 6
 last_used: 2026-07-04
 last_validated: 2026-06-22
 status: active
+trust: demo
 links: ["[[2026-06-16-jwt-refresh-race]]"]
 ---
 **Pattern:** For short critical sections spanning app instances, use a
@@ -77,6 +79,7 @@ access_count: 2
 last_used: 2026-06-24
 last_validated: 2026-06-20
 status: active
+trust: demo
 links: []
 ---
 **Problem:** e2e jobs flaked ~15% with ECONNREFUSED; two matrix shards
@@ -101,6 +104,7 @@ access_count: 7
 last_used: 2026-07-06
 last_validated: 2026-07-03
 status: active
+trust: demo
 links: []
 ---
 **Convention:** Every non-2xx response body is
@@ -126,6 +130,7 @@ access_count: 3
 last_used: 2026-07-05
 last_validated: 2026-07-01
 status: needs-review
+trust: demo
 links: []
 ---
 **Problem:** \`/reports?filter=\` queries scanned 2M rows; p95 was 8 s.
@@ -151,7 +156,7 @@ last_used: null
 last_validated: 2026-06-15
 status: active
 scope: personal
-trust: user-explicit
+trust: demo
 links: []
 ---
 Use pnpm, never npm or yarn, for installing and running scripts in every project.
@@ -170,6 +175,7 @@ access_count: 1
 last_used: 2026-06-18
 last_validated: 2026-06-18
 status: archived
+trust: demo
 links: []
 ---
 **Decision:** Keep the \`@lib → src/lib\` webpack alias during the Vite

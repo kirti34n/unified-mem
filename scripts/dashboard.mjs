@@ -61,7 +61,11 @@ if (argv.includes('--export')) {
     .replace('poll();setInterval(poll,5000);', 'poll();')
     .replace('<span class="live"><span class="dot"></span>LIVE</span>',
       '<span class="live">static demo · fictional seed data · <a href="https://github.com/kirti34n/unified-mem" style="color:inherit">get the real thing</a></span>')
-    .replace('</head>', `<script>window.__STATE__=${JSON.stringify(state())}</script>\n</head>`);
+    .replace('</head>', `<script>window.__STATE__=${JSON.stringify((() => {
+      const s = state();
+      s.notes = s.notes.filter(n => n.scope !== 'personal'); // preferences and your docs never enter a shareable export
+      return s;
+    })())}</script>\n</head>`);
   writeFileSync(join(outDir, 'index.html'), html);
   console.log(`static dashboard exported to ${outDir}`);
   process.exit(0);

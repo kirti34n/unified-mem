@@ -69,7 +69,8 @@ for (const file of files) {
     for (const [pi, part] of parts(body).entries()) {
       if (SECRET_RE.test(part)) { console.warn(`skipped chunk "${heading}" (${basename(file)}): secret pattern detected`); skipped++; continue; }
       n++;
-      const id = `${today}-ref-${slugify(docTitle)}-${n}`;
+      const h8 = createHash("sha256").update(abs).digest("hex").slice(0, 8); // distinct docs with colliding titles must not overwrite each other
+      const id = `${today}-ref-${slugify(docTitle)}-${h8}-${n}`;
       const title = `${docTitle}: ${heading}${pi > 0 ? ` (part ${pi + 1})` : ''}`.slice(0, 100);
       const note = `---
 id: ${id}

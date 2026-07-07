@@ -10,7 +10,7 @@ const text = args.filter(a => !a.startsWith('--')).join(' ');
 
 try {
   const id = rememberNote(text, { kind, sessionId: 'cli' });
-  console.log(`saved: ${id} (${kind}, pinned into every future session)`);
+  console.log(kind === "preference" ? `saved: ${id} (preference, pinned into every future session)` : `saved: ${id} (note, surfaces when a prompt matches it)`);
 } catch (e) {
   console.error(`not saved: ${e.message}`);
   process.exit(1);
