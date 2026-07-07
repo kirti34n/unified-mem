@@ -74,6 +74,10 @@ for (const n of notes.filter(n => n.status !== 'archived')) {
 if (!process.argv.includes('--no-verify')) {
   const pending = db.prepare("SELECT * FROM notes WHERE status='needs-review'").all()
     .filter(n => (n.repos || '').split(',').some(r => CONFIG.repos[r.trim()]))
+    // backoff: a note verify-restored in the last 72h doesn't burn budget again;
+    // hot files (frequent commits) otherwise churn the whole nightly verify_cap
+    .filter(n => !db.prepare("SELECT 1 FROM consolidations WHERE op='verify' AND note_id=? AND ts > ?")
+      .get(n.id, new Date(now - 72 * 3600 * 1000).toISOString()))
     .slice(0, CONFIG.verify_cap);
   for (const n of pending) {
     const repoPath = (n.repos || '').split(',').map(r => CONFIG.repos[r.trim()]).find(Boolean);
@@ -92,8 +96,9 @@ ${noteText}`;
     if (!line) { console.warn(`  verify ${n.id}: no verdict, left as needs-review`); continue; }
     const reason = line.trim();
     if (reason.startsWith('VALID:')) {
-      // full timestamp, not bare date, date-only would re-invalidate on same-day commits (churn)
-      const diff = updateNoteFile(db, n.id, { status: 'active', last_validated: ts });
+      // full timestamp (seconds precision, no fractional part: it feeds git --since),
+      // date-only would re-invalidate on same-day commits (churn)
+      const diff = updateNoteFile(db, n.id, { status: 'active', last_validated: ts.slice(0, 19) });
       log.run(ts, 'verify', n.id, `Verified against current code → restored to active. ${reason}`, diff);
       counts.verify = (counts.verify || 0) + 1;
     } else {
@@ -128,7 +133,7 @@ for (const n of notes.filter(n => n.status === 'active')) {
 // merge compatible ones; a classification pass beats any mechanical recency rule.
 if (!process.argv.includes('--no-verify')) {
   const pairs = db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-candidate'").all()
-    .map(r => /pair: (\S+)\|(\S+)/.exec(r.detail)).filter(Boolean)
+    .map(r => /pair: ([a-z0-9-]+)\|([a-z0-9-]+)/i.exec(r.detail)).filter(Boolean) // id-charset match: \S+ would swallow the trailing comma
     .filter(m => !db.prepare("SELECT 1 FROM consolidations WHERE op='dedupe-verdict' AND detail LIKE ?").get(`%${m[1]}|${m[2]}%`))
     .slice(0, 3);
   for (const [, a, b] of pairs) {
@@ -161,6 +166,9 @@ for (const n of hubNotes)
   for (const e of (n.entities || '').split(',').map(s => s.trim()).filter(Boolean))
     (byEntity[e] ??= []).push(n);
 mkdirSync(join(ROOT, 'entities'), { recursive: true });
+// full regeneration: remove stale hub files whose notes are gone (e.g. after purge)
+const { readdirSync, unlinkSync } = await import('node:fs');
+for (const f of readdirSync(join(ROOT, 'entities'))) if (f.endsWith('.md')) unlinkSync(join(ROOT, 'entities', f));
 let hubs = 0;
 for (const [e, ns] of Object.entries(byEntity)) {
   const safe = e.replace(/[^a-z0-9_-]/gi, '-');

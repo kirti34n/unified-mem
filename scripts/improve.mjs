@@ -10,18 +10,31 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, loadConfig } from './vault.mjs';
-import { runEval } from '../eval/run.mjs';
+import { runEval, defaultQuestionFile } from '../eval/run.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (f, d) => argv.includes(f) ? argv[argv.indexOf(f) + 1] : d;
 const FOREVER = argv.includes('--forever');
 const ITER = FOREVER ? Infinity : Number(opt('--iterations', 5));
+const qFile = opt('--file', defaultQuestionFile());
 const evalOpts = {
-  runs: Number(opt('--runs', 1)),
+  runs: Number(opt('--runs', 2)),
   questions: Number(opt('--questions', Infinity)),
   model: opt('--model', loadConfig().eval_model),
-  arms: ['A'], quiet: true, // knob comparison only needs the memory arm
+  arms: ['A'], quiet: true, file: qFile, // knob comparison only needs the memory arm
 };
+
+// Minimum-sample gate: a loop that mutates production config MUST NOT decide on
+// jitter. Refuse to run below 14 A-arm samples per measurement.
+{
+  const { readFileSync } = await import('node:fs');
+  const nq = Math.min(JSON.parse(readFileSync(qFile, 'utf8')).length, evalOpts.questions);
+  if (nq * evalOpts.runs < 14) {
+    console.error(`refusing to run: ${nq} questions x ${evalOpts.runs} runs = ${nq * evalOpts.runs} samples (< 14). ` +
+      `Add questions to ${qFile} or raise --runs. Config changes decided on noise are worse than none.`);
+    process.exit(1);
+  }
+}
 const CONFIG_PATH = join(ROOT, 'config.json');
 const LOG_DIR = join(ROOT, 'improve');
 mkdirSync(LOG_DIR, { recursive: true });

@@ -1,14 +1,29 @@
 // Seeds vault.db: indexes real notes/, then inserts 3 weeks of DEMO history
 // (sessions, injections, Q trajectories, consolidation diffs, daily metrics)
 // so the dashboard shows the full loop before real data flows.
-// Idempotent: wipes demo rows first.  `--purge-demo` wipes and exits.
+// Idempotent: wipes demo rows first.  `--purge-demo` wipes rows AND deletes the
+// six fictional demo note files, leaving only real data.
+import { unlinkSync } from 'node:fs';
 import { openDb, reindexNotes } from './vault.mjs';
+
+const DEMO_NOTE_IDS = [
+  '2026-06-16-jwt-refresh-race', '2026-06-16-redis-lock-pattern',
+  '2026-06-18-legacy-webpack-alias', '2026-06-20-ci-flaky-playwright',
+  '2026-06-24-api-error-envelope', '2026-07-01-pg-jsonb-index',
+];
 
 const db = openDb();
 for (const t of ['sessions', 'injections', 'q_history', 'consolidations', 'metrics_daily'])
   db.exec(`DELETE FROM ${t} WHERE demo=1`);
 if (process.argv.includes('--purge-demo')) {
-  console.log('demo rows purged');
+  let removed = 0;
+  for (const id of DEMO_NOTE_IDS) {
+    const row = db.prepare('SELECT path FROM notes WHERE id=?').get(id);
+    if (row?.path) { try { unlinkSync(row.path); removed++; } catch { } }
+    db.prepare('DELETE FROM notes WHERE id=?').run(id);
+  }
+  reindexNotes(db);
+  console.log(`demo purged: rows wiped, ${removed} fictional note files deleted`);
   process.exit(0);
 }
 const indexed = reindexNotes(db);

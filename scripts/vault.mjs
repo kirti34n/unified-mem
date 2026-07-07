@@ -17,7 +17,7 @@ const DEFAULTS = {
   q_alpha: 0.3, q_delta_cap: 0.15, q_clamp: [0.05, 0.95],
   reflector_model: 'claude-sonnet-5', eval_model: 'claude-haiku-4-5-20251001',
   verify_model: 'claude-haiku-4-5-20251001', verify_cap: 5,
-  prompt_k: 2, prompt_min_sim: 0.15, contribution_judge: 'llm',
+  prompt_k: 2, prompt_min_sim: 0.15, start_min_sim: 0.2, contribution_judge: 'llm',
   repos: {},
 };
 export function loadConfig() {

@@ -16,7 +16,7 @@ try {
   const sessionId = hook.session_id || 'unknown';
   const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')
     .all(sessionId).map(r => r.note_id));
-  const terms = tokenize(prompt + ' ' + basename(hook.cwd || ''));
+  const terms = tokenize(prompt + ' ' + basename(hook.cwd || '')).slice(0, 60); // cap: a pasted stack trace must not mean hundreds of DF queries
   const k = CONFIG.prompt_k;
   // Precision gate, frequency-aware: in a vault of fixes, words like "fix", "load",
   // "session" appear in most notes and carry zero signal. Only query terms present
@@ -44,6 +44,7 @@ try {
   }
   process.stdout.write(out.slice(0, 6000));
 
+  if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0); // eval reads memory, never mutates retrieval state
   const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,0)');
   const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
   const today = new Date().toISOString().slice(0, 10);

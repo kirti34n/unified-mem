@@ -43,8 +43,14 @@ try {
   } catch { /* no card yet for this repo */ }
 
   // Relevance floor: injecting nothing beats injecting noise. A note must be
-  // topically relevant (sim>0) or have PROVEN high utility (q>=0.7) to ride along.
-  const top = scoreNotes(db, query).filter(n => n.sim > 0 || n.q_value >= 0.7);
+  // meaningfully relevant (sim >= start_min_sim, one shared token is not enough)
+  // or have PROVEN high utility (q>=0.7) to ride along with the catalog.
+  // Dedupe vs notes already injected this session: resume/compact re-fires this
+  // hook, and duplicate injection rows would double a note's per-session Q updates.
+  const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')
+    .all(sessionId).map(r => r.note_id));
+  const top = scoreNotes(db, query)
+    .filter(n => (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id));
   const used = [];
   if (top.length) out += '\nMost relevant notes for this repo right now:\n';
   for (const n of top) {
@@ -56,6 +62,9 @@ try {
   }
   process.stdout.write(out);
 
+  // Eval sessions read memory but must not mutate retrieval state (last_used /
+  // access_count ratchets would self-reinforce the notes the eval targets).
+  if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0);
   const ts = new Date().toISOString();
   db.prepare('INSERT OR IGNORE INTO sessions (id,ts,repo,outcome,tokens_injected,summary,demo) VALUES (?,?,?,?,?,?,0)')
     .run(sessionId, ts, basename(cwd), 'indeterminate', Math.round(out.length / 4), hook.source || 'startup');

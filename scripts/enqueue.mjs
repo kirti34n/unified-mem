@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { ROOT } from './vault.mjs';
 
 try {
+  // Internal headless calls (reflector, verify, judge, arbiter, eval) must never be
+  // captured: they would feed the hourly reflector a stream of meta-transcripts,
+  // a cost loop that reflects its own machinery. They all set one of these flags.
+  if (process.env.MEMORY_OFF === '1' || process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0);
   const hook = JSON.parse(readFileSync(0, 'utf8'));
   const id = hook.session_id || `unknown-${Date.now()}`;
   mkdirSync(join(ROOT, 'queue'), { recursive: true });

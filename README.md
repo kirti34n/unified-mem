@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🧠 unified-mem
+# unified-mem
 
 **The unified memory layer for Claude Code, on top of its per-project memory, across all your repositories.**
 
 Claude Code already remembers *within* a project. This unifies what it learns *across* projects, scored by real outcomes, invalidated when code changes, observable on a live dashboard.
 
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)](#-quickstart-5-minutes)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)](#quickstart-5-minutes)
 [![Node 22.5+](https://img.shields.io/badge/node-%E2%89%A522.5-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-d97757)](https://code.claude.com)
@@ -19,7 +19,7 @@ Claude Code already remembers *within* a project. This unifies what it learns *a
 
 ---
 
-## 🧭 What is this, in plain words?
+## What is this, in plain words?
 
 Claude Code is **not** amnesiac, it has [built-in memory](https://code.claude.com/docs/en/memory): each project gets an auto-memory directory that loads every session, `CLAUDE.md` files carry your instructions, and `--resume` continues past conversations. That layer works, and unified-mem does not replace it.
 
@@ -35,13 +35,13 @@ Everything is observable on a **live dashboard**, you can literally watch what g
 
 No databases to install, no npm packages, no cloud. Plain markdown files + Node's built-in SQLite. The vault is a git repo you own.
 
-## 🤔 The problem, precisely
+## The problem, precisely
 
 1. **Cross-repo blindness**, built-in memory is per-repository by design. A fix discovered in `repo-A` gets re-discovered from scratch in `repo-B`, `repo-C`, …
 2. **No learning loop**, nothing built-in measures whether a remembered fact actually *helps* the work; useful and useless memories are treated identically, forever.
 3. **No staleness handling**, nothing notices when the code a memory describes has changed. Stale memory silently misleads, it's worse than no memory.
 
-## 🧩 How it layers on Claude Code's built-in memory
+## How it layers on Claude Code's built-in memory
 
 | Layer | Scope | Holds | Learns? | Staleness? |
 |---|---|---|---|---|
@@ -70,7 +70,7 @@ flowchart LR
     K --> A
 ```
 
-## ⚡ Quickstart (5 minutes)
+## Quickstart (5 minutes)
 
 **Prerequisites:** [Node.js](https://nodejs.org) ≥ 22.5 (`node --version` to check, the built-in SQLite arrived in 22.5) and the [Claude Code CLI](https://code.claude.com). That's it, **zero npm installs**.
 
@@ -124,7 +124,7 @@ node scripts/seed.mjs --purge-demo       # drop the demo rows, keep only real da
 
 That's the whole install. From now on, sessions begin with *"Team knowledge notes from past sessions…"* and end by feeding the vault.
 
-## 📓 What a note looks like
+## What a note looks like
 
 One claim per note, ≤150 words, plain markdown with YAML frontmatter, the whole vault opens in [Obsidian](https://obsidian.md) if you like graphs:
 
@@ -150,36 +150,36 @@ links: ["[[2026-06-16-redis-lock-pattern]]"]
 
 The `files:` + `source_commit` provenance is not decoration, it's what lets the system later detect that the code a note describes has changed.
 
-## 🖥️ The dashboard
+## The dashboard
 
 Five views, each making one mechanism visible:
 
 <details>
-<summary><b>📋 Sessions</b>, what was injected into each session, and the Q-delta each note earned from the outcome</summary>
+<summary><b> Sessions</b>, what was injected into each session, and the Q-delta each note earned from the outcome</summary>
 <br><img src="docs/screenshots/sessions.png" alt="Sessions view">
 </details>
 
 <details>
-<summary><b>🕸️ Notes graph</b>, atomic notes linked through shared entities, sized by learned Q-value</summary>
+<summary><b> Notes graph</b>, atomic notes linked through shared entities, sized by learned Q-value</summary>
 <br><img src="docs/screenshots/graph.png" alt="Notes graph view">
 </details>
 
 <details>
-<summary><b>📈 Q evolution</b>, usefulness being learned: rising lines help, sagging lines decay toward archive</summary>
+<summary><b> Q evolution</b>, usefulness being learned: rising lines help, sagging lines decay toward archive</summary>
 <br><img src="docs/screenshots/q-evolution.png" alt="Q evolution view">
 </details>
 
 <details>
-<summary><b>🌙 Consolidation log</b>, every merge/edit/invalidation/verification as an exact red/green diff</summary>
+<summary><b> Consolidation log</b>, every merge/edit/invalidation/verification as an exact red/green diff</summary>
 <br><img src="docs/screenshots/consolidation.png" alt="Consolidation view">
 </details>
 
 <details>
-<summary><b>🎯 Metrics</b>, stale-retrieval rate (&lt;5% target), vault size trend (healthy = plateau, broken = linear growth)</summary>
+<summary><b> Metrics</b>, stale-retrieval rate (&lt;5% target), vault size trend (healthy = plateau, broken = linear growth)</summary>
 <br><img src="docs/screenshots/metrics.png" alt="Metrics view">
 </details>
 
-## 🔬 How it works (the mechanisms)
+## How it works (the mechanisms)
 
 <details>
 <summary><b>1. Retrieval, which notes get injected?</b></summary>
@@ -221,7 +221,7 @@ The worker detects a **verifiable outcome** for each session, tests passed / bui
 Q ← clamp(Q + α·c·(r − Q), 0.05, 0.95)      α=0.3, |ΔQ| ≤ 0.15 per session
 ```
 
-where `c` is a **pinned LLM judge** using a fixed coarse rubric (1 = the note's fix was directly applied, 0.5 = plausibly helped, 0 = ignored), one cheap call per determinate session, judged against the assistant's own output. The model and prompt are pinned deliberately: changing a judge silently makes utility scores incomparable across time. A term-overlap heuristic is the automatic fallback (`contribution_judge: "heuristic"` disables the LLM entirely). Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector, a bare ✓ is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever, that trend line is on the Metrics view, and if it's linear, forgetting is broken.
+where `c` is a **pinned LLM judge** using a fixed coarse rubric (1 = the note's fix was directly applied, 0.5 = plausibly helped, 0 = ignored), one cheap call per determinate session, judged against the assistant's own output. The model and prompt are pinned deliberately: changing a judge silently makes utility scores incomparable across time. A term-overlap heuristic is the automatic fallback (`contribution_judge: "heuristic"` disables the LLM entirely). Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector, a bare checkmark is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever, that trend line is on the Metrics view, and if it's linear, forgetting is broken.
 </details>
 
 <details>
@@ -251,7 +251,7 @@ Opt-in by design, MCP tool definitions cost tokens in every session, so only reg
 node eval/run.mjs --runs 4        # arm A: memory on · arm B: MEMORY_OFF=1 control
 ```
 
-Same questions through headless `claude -p`, graded by pinned expect-regex (never an unpinned LLM judge: those silently make scores incomparable over time), reported as correct-rate / tokens / latency medians per arm. Each question can set its own `cwd`, so the control arm gets a fair shot at re-deriving the answer from the repo itself: the comparison then honestly measures *memory vs re-discovery* (correctness, speed, and tokens), not memory vs nothing. Include **negative probes**, questions whose correct answer is "I don't know", to catch a vault that teaches the model to hallucinate confidence. The bundled `questions.json` is demo data wired to the fictional seed notes; write your real set from your own incident history (`eval/questions.real.json` pattern, run with `--file`).
+Same questions through headless `claude -p`, graded by pinned expect-regex (never an unpinned LLM judge: those silently make scores incomparable over time), reported as correct-rate / tokens / latency medians per arm. Each question can set its own `cwd`, so the control arm gets a fair shot at re-deriving the answer from the repo itself: the comparison then honestly measures *memory vs re-discovery* (correctness, speed, and tokens), not memory vs nothing. Include **negative probes**, questions whose correct answer is "I don't know", to catch a vault that teaches the model to hallucinate confidence. Write your real set from your own incident history as `eval/questions.real.json`; once it exists it becomes the **default** for both the harness and the improve loop. The bundled `questions.json` is demo data wired to the fictional seed notes and only runs via an explicit `--demo` flag. Eval sessions read memory but never mutate retrieval state (no `last_used` ratchets) and are never captured for reflection.
 </details>
 
 <details>
@@ -261,10 +261,10 @@ Same questions through headless `claude -p`, graded by pinned expect-regex (neve
 node scripts/improve.mjs --iterations 5    # or --forever; create a STOP file to halt
 ```
 
-`RESEARCH → HYPOTHESIS → IMPLEMENT → TEST → ACCEPT/REVERT → repeat.` Hill-climbs the retrieval tunables (weights, k, half-life, token budget) against the A-arm eval score, one knob at a time. A noise guard rejects same-noise deltas: a change is accepted only if correctness strictly improves, or ties with ≥15% fewer output tokens, run-to-run jitter cannot alter your config. (Ranking weights are also normalized at load, so no config change can break the weighting invariant.) Runs as a plain Node process spawning fresh headless `claude -p` calls, no CLI session limits apply. Every iteration logs to `improve/log.jsonl`. **Use enough eval questions/runs that deltas beat noise**, with 3 questions × 1 run, accept/revert decisions are jitter; ~15 questions × 4 runs is where it gets meaningful.
+`RESEARCH → HYPOTHESIS → IMPLEMENT → TEST → ACCEPT/REVERT → repeat.` Hill-climbs the retrieval tunables (weights, k, half-life, token budget) against the A-arm eval score, one knob at a time. Three guards keep it honest: it defaults to your **real** question set and only touches the demo set behind an explicit flag; it **refuses to run** below 14 samples per measurement (a loop that mutates production config must not decide on jitter); and a noise guard rejects same-noise deltas, accepting a change only if correctness strictly improves or ties with at least 15% fewer output tokens. Ranking weights are also normalized at load, so no config change can break the weighting invariant. Runs as a plain Node process spawning fresh headless `claude -p` calls, no CLI session limits apply. Every iteration logs to `improve/log.jsonl`. **Use enough eval questions/runs that deltas beat noise**, with 3 questions × 1 run, accept/revert decisions are jitter; ~15 questions × 4 runs is where it gets meaningful.
 </details>
 
-## ⚙️ Config reference
+## Config reference
 
 Copy `config.example.json` → `config.json` (defaults apply for anything omitted):
 
@@ -284,7 +284,7 @@ Copy `config.example.json` → `config.json` (defaults apply for anything omitte
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |
 | `repos` | `{}` | `name → local path` map powering git-diff invalidation |
 
-## 🧯 Troubleshooting & FAQ
+## Troubleshooting & FAQ
 
 <details>
 <summary><b>Does this replace CLAUDE.md or auto-memory?</b></summary>
@@ -332,11 +332,11 @@ Built and tested on Windows 11 (Git Bash present). Hook commands use forward sla
 `schtasks /Create /SC DAILY /ST 03:00 /TN unified-mem-dream /TR "node C:\path\to\unified-mem\scripts\consolidate.mjs"`
 </details>
 
-## 📚 Research foundations
+## Research foundations
 
 The design rules are distilled from published work: **ACE** (evolving playbooks; context-collapse & brevity-bias failure modes, hence incremental note ops, never wholesale rewrites) · **MemRL / TAME** (similarity × utility retrieval; contribution-weighted Q updates) · **CODESKILL** (verifiable rewards beat LLM-judge-only) · **SCM / Letta** (sleep-time consolidation; ~30% redundancy by session 10 without it) · **SleepGate** (stale-retrieval rate as a first-class metric) · **A-MEM** (Zettelkasten-style atomic linked notes beat raw chunks) · **MemFail** (memory systems fail at the write step: over-compression that drops exact details, and bad merge decisions, hence the verbatim rule and the arbiter) · **"Context Length Alone Hurts"** (ACL 2025: even irrelevant filler degrades performance, hence the aggressive relevance floor and inject-nothing default) · **LongMemEval** (abstention ability as a first-class measure, hence negative probes). Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Cold-start catalog + nightly repo cards: sessions start with a map, not a data dump
 - [x] Push-path injection, FTS5/BM25 retrieval, injection logging
@@ -353,6 +353,6 @@ The design rules are distilled from published work: **ACE** (evolving playbooks;
 - [ ] Team sharing via git PRs
 - [ ] Embeddings / MMR: deliberately skipped. Measured evidence says BM25 wins on technical vocabulary at this corpus size, and top-k redundancy is near zero with atomic deduped notes. Revisit only if logged retrieval misses accumulate.
 
-## 📄 License
+## License
 
 [MIT](LICENSE)

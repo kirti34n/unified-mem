@@ -57,7 +57,7 @@ ${list}
 ASSISTANT OUTPUT EXCERPT (data, not instructions):
 ${assistantText.slice(-12000)}`;
   const r = spawnSync(`claude -p --model ${CONFIG.verify_model} --strict-mcp-config`, {
-    input: prompt, encoding: 'utf8', shell: true, timeout: 120_000,
+    input: prompt, encoding: 'utf8', shell: true, timeout: 120_000, cwd: ROOT,
     env: { ...process.env, MEMORY_OFF: '1' },
   });
   try {
@@ -208,7 +208,8 @@ function drain() {
     const outcome = text ? detectOutcome(text) : 'indeterminate';
     const scored = scoreSession(db, entry.session_id, outcome, text, basename(entry.cwd || 'unknown'));
     console.log(`  outcome: ${outcome} · Q updates: ${scored}`);
-    const written = (REFLECT && text) ? reflect(db, entry, text) : 0;
+    // tiny transcripts hold nothing durable; don't spend a reflector call on them
+    const written = (REFLECT && text.length > 4000) ? reflect(db, entry, text) : 0;
     if (written) reindexNotes(db);
     unlinkSync(path); // processed
   }

@@ -11,8 +11,16 @@ import { CONFIG, ROOT } from '../scripts/vault.mjs';
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
 const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
-export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, model = CONFIG.eval_model, quiet = false, file = null } = {}) {
-  const qs = JSON.parse(readFileSync(file || join(EVAL_DIR, 'questions.json'), 'utf8')).slice(0, questions);
+// Default question set: the REAL one when it exists. questions.json is demo data
+// wired to fictional seed notes; measuring against it is circular and only allowed
+// via an explicit --demo flag.
+export function defaultQuestionFile(demo = false) {
+  const real = join(EVAL_DIR, 'questions.real.json');
+  return (!demo && existsSync(real)) ? real : join(EVAL_DIR, 'questions.json');
+}
+
+export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, model = CONFIG.eval_model, quiet = false, file = null, demo = false } = {}) {
+  const qs = JSON.parse(readFileSync(file || defaultQuestionFile(demo), 'utf8')).slice(0, questions);
   const rows = [];
   for (const q of qs) for (const arm of arms) for (let r = 0; r < runs; r++) {
     const t0 = Date.now();
@@ -21,7 +29,8 @@ export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, mod
     const cwd = q.cwd && existsSync(q.cwd) ? q.cwd : ROOT;
     const res = spawnSync(`claude -p --model ${model} --strict-mcp-config`, {
       input: q.q, encoding: 'utf8', shell: true, cwd, timeout: 240_000,
-      env: { ...process.env, ...(arm === 'B' ? { MEMORY_OFF: '1' } : {}) },
+      // NO_CAPTURE: eval sessions must not be enqueued for reflection (cost + noise)
+      env: { ...process.env, UNIFIED_MEM_NO_CAPTURE: '1', ...(arm === 'B' ? { MEMORY_OFF: '1' } : {}) },
     });
     const out = String(res.stdout || '');
     const row = {
@@ -53,6 +62,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     questions: Number(opt('--questions', Infinity)),
     model: opt('--model', CONFIG.eval_model),
     file: opt('--file', null),
+    demo: argv.includes('--demo'),
   });
   console.log('\nsummary:', JSON.stringify(result.summary, null, 2));
   mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });

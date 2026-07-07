@@ -71,13 +71,15 @@ Full source list in §9 References.
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
          ▲ write (reflector, scorer, consolidator)              │ read (retriever, dashboard)
          │                                                      ▼
-┌────────── async worker (background) ─────────┐   ┌────────── Claude Code session ───────────┐
-│ Reflector  : transcript → 1-5 typed notes    │   │ SessionStart hook → top-k notes injected  │
-│ Scorer     : outcome → Q updates             │   │ (optional) MCP vault_search on demand     │
-│ Consolidator (nightly "dream"):              │   │ SessionEnd hook → enqueue for reflection  │
-│   merge · contradict-resolve · decay ·       │   └───────────────────────────────────────────┘
-│   archive · git-diff invalidation            │                      │ every event lands in vault.db
-└──────────────────────────────────────────────┘                      ▼
+┌────────── async worker (background) ─────┐   ┌────────── Claude Code session ───────────┐
+│ Reflector  : transcript → 0-5 typed notes    │   │ SessionStart → catalog + repo card +      │
+│  (verbatim details; schema + size gates)     │   │  floor-passing notes (map, not dump)      │
+│ Scorer     : outcome → Q via pinned judge    │   │ UserPromptSubmit → just-in-time notes,    │
+│ Consolidator (nightly "dream"):              │   │  frequency-gated, session-deduped         │
+│   decay · archive · git-diff invalidation ·  │   │ vault_search MCP → explicit pull          │
+│   verify-pass · dedupe arbiter · entity      │   │ SessionEnd → enqueue (internal headless   │
+│   hubs · repo cards                          │   │  calls are never captured)                │
+└──────────────────────────────────────────────┐   └───────────────────────────────────────────┘
                                             ┌──────────── live dashboard :7777 ────────────┐
                                             │ Sessions · Notes graph · Q evolution ·        │
                                             │ Consolidation (Prism diffs) · Metrics         │
@@ -147,7 +149,7 @@ Every memory mechanism maps to a view:
 
 | View | Mechanism it makes visible | What you see |
 |---|---|---|
-| **Sessions** | Push-path retrieval + scoring (R2, R3, R10) | Timeline of sessions: repo, outcome badge (✓ success / ✗ failure / ○ indeterminate), token budget used, each injected note with rank, score, and **Q delta (▲/▼)** it earned from that session's outcome |
+| **Sessions** | Push-path retrieval + scoring (R2, R3, R10) | Timeline of sessions: repo, outcome badge ( success /  failure / ○ indeterminate), token budget used, each injected note with rank, score, and **Q delta (▲/▼)** it earned from that session's outcome |
 | **Notes graph** | Atomic linked notes (R8) | Force-directed graph: note nodes colored by type, sized by q_value, linked to shared entity hubs and wikilinks; amber ring = needs-review |
 | **Q evolution** | Utility learning + decay (R2, R3, R7) | Multi-line chart of q_value per note over sessions, rising lines = notes that keep helping, sagging lines = decay of unused notes, flat-lining into archive |
 | **Consolidation** | Dream job: merge / edit / invalidate / archive (R1, R6, R9) | Operation log; **every merge and edit shows a Prism `diff-highlight` view** of exactly what changed in the note, before/after, red/green |
@@ -220,7 +222,7 @@ in your final summary so the reflector can capture it.
 
 | Phase | Time | Build | Exit criteria |
 |---|---|---|---|
-| **0, Seed + See** ✅ *scaffolded today* | Days 1-3 | Vault repo, schema, seed notes, `retrieve/enqueue` hooks, **live dashboard with seeded demo history** | Dashboard shows the full loop on demo data; Claude Code visibly uses seed notes in 3 real sessions |
+| **0, Seed + See** (done) *scaffolded today* | Days 1-3 | Vault repo, schema, seed notes, `retrieve/enqueue` hooks, **live dashboard with seeded demo history** | Dashboard shows the full loop on demo data; Claude Code visibly uses seed notes in 3 real sessions |
 | **1, Capture** | Wk 1-2 | Worker + reflector prompt; secrets grep; real sessions start replacing seed data on the dashboard | ≥70% of auto-notes rated useful; zero secrets |
 | **2, Retrieval + Eval** | Wk 3-4 | FTS5 + embeddings behind `scoreNotes()`; injection logging already live; eval harness; optional `vault_search` MCP | A/B: fewer tokens/file-reads, no success regression |
 | **3, Evolution** | Wk 5-8 | Scorer + Q updates; nightly dream job writing real consolidation diffs; git-diff invalidation; decay | Stale-retrieval <5%; size plateaus; A ≥ B +10 pts |
