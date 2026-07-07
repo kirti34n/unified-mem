@@ -1,0 +1,21 @@
+{
+  "name": "unified-mem",
+  "version": "1.0.0",
+  "description": "Cross-repo evolving memory layer for Claude Code: notes that learn from outcomes, self-invalidate on code change, and show their work on a live dashboard",
+  "type": "module",
+  "license": "MIT",
+  "repository": "github:kirti34n/unified-mem",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "init": "node scripts/init.mjs",
+    "seed": "node scripts/seed.mjs",
+    "dashboard": "node scripts/dashboard.mjs",
+    "worker": "node scripts/worker.mjs",
+    "consolidate": "node scripts/consolidate.mjs",
+    "test": "node --test",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {}
+}
