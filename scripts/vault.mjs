@@ -225,6 +225,28 @@ export function makeDiff(path, before, after) {
 
 export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
 
+export const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
+
+// Schema gate for reflector output (untrusted). Returns null if valid, else the reason.
+export function validateNote(parsed) {
+  if (!parsed?.id || !/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/.test(parsed.id)) return 'invalid or missing id';
+  if (!parsed.title) return 'missing title';
+  if (!parsed.body) return 'missing body';
+  if (!NOTE_TYPES.includes(parsed.type)) return `type must be one of: ${NOTE_TYPES.join('|')}`;
+  return null;
+}
+
+// Verifiable-outcome heuristic (R5). Deliberately conservative: a bare checkmark
+// is NOT a success signal (Claude Code output is full of them), "0 failed" is not
+// a failure. LLM judgment only ever refines contribution, never the outcome.
+export function detectOutcome(text) {
+  const tail = text.slice(-8000);
+  if (/(\d+ (passed|passing)|all tests pass|tests? (pass|green)|build succeeded|verified working)/i.test(tail)
+    && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success';
+  if (/([1-9]\d* (failed|failing)|build failed|tests? fail|FATAL|unhandled exception)/i.test(tail)) return 'failure';
+  return 'indeterminate';
+}
+
 // ---- LLM pipeline calls: one path, budget-guarded, cost-ledgered ----
 const LEDGER = join(VAULT, 'index', 'cost-ledger.jsonl');
 

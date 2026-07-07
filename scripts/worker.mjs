@@ -6,9 +6,7 @@ import { readFileSync, readdirSync, unlinkSync, writeFileSync, mkdirSync, exists
 import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { userInfo, hostname } from 'node:os';
-import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, runClaude, CONFIG, ROOT, VAULT, NOTES_DIR, SECRET_RE } from './vault.mjs';
-
-const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
+import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, validateNote, detectOutcome, runClaude, CONFIG, ROOT, VAULT, NOTES_DIR, SECRET_RE } from './vault.mjs';
 
 const argv = process.argv.slice(2);
 const MODEL = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : CONFIG.reflector_model;
@@ -36,14 +34,8 @@ function transcriptText(path, maxChars = 60_000) {
   return full.length > maxChars ? full.slice(0, maxChars / 2) + '\n[...truncated...]\n' + full.slice(-maxChars / 2) : full;
 }
 
-// Verifiable-outcome heuristic (R5). LLM judge only fills gaps in Phase 3+.
-function detectOutcome(text) {
-  const tail = text.slice(-8000);
-  if (/(\d+ (passed|passing)|all tests pass|tests? (pass|green)|build succeeded|verified working)/i.test(tail)
-    && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success'; // note: bare ✓ deliberately NOT a signal, Claude Code output is full of them
-  if (/([1-9]\d* (failed|failing)|build failed|tests? fail|FATAL|unhandled exception)/i.test(tail)) return 'failure';
-  return 'indeterminate';
-}
+// detectOutcome and validateNote live in vault.mjs so they are unit-testable
+// (this file runs the drain on import and cannot be imported by tests).
 
 // Pinned contribution judge (coarse rubric, one cheap call per determinate session).
 // Model and prompt are PINNED via config: changing them makes Q scores incomparable
@@ -175,11 +167,8 @@ function reflect(db, entry, text) {
     // schema gate: reflector output is untrusted, reject anything malformed
     const parsed = parseNote(note);
     const id = parsed?.id;
-    if (!id || !/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/.test(id) || !parsed.title || !parsed.body
-      || !NOTE_TYPES.includes(parsed.type)) {
-      console.error(`dropped ${id || '(no id)'}: failed schema validation (type must be one of: ${NOTE_TYPES.join('|')})`);
-      continue;
-    }
+    const invalid = validateNote(parsed);
+    if (invalid) { console.error(`dropped ${id || '(no id)'}: ${invalid}`); continue; }
     if (SECRET_RE.test(note)) { console.error(`dropped ${id}: secret pattern detected`); continue; }
     if (db.prepare('SELECT 1 FROM notes WHERE id=?').get(id)) continue;
     // provenance is stamped by the worker, never trusted from LLM output (poisoning defense)
