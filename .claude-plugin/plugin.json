@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "unified-mem",
+  "description": "Cross-repo memory for Claude Code: notes that learn from real outcomes, self-invalidate when the cited code changes in git, and show their work on a live dashboard. Zero runtime dependencies.",
+  "author": { "name": "Zagrius", "url": "https://github.com/kirti34n" },
+  "homepage": "https://kirti34n.github.io/unified-mem/demo-site/",
+  "repository": "https://github.com/kirti34n/unified-mem",
+  "license": "MIT",
+  "keywords": ["memory", "claude-code", "mcp", "cross-repo", "ai-memory", "developer-tools"]
+}

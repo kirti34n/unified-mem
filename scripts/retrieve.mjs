@@ -5,8 +5,8 @@
 // dashboard's Repos view.
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, hookDebugLog, loadConfig, CONFIG, ROOT, VAULT } from './vault.mjs';
+import { basename, join, dirname } from 'node:path';
+import { openDb, scoreNotes, tokenize, hookDebugLog, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -35,10 +35,10 @@ try {
   // enriches it with vault knowledge.
   if (process.env.UNIFIED_MEM_NO_CAPTURE !== '1' && !CONFIG.repos?.[repoName] && existsSync(join(cwd, '.git'))) {
     try {
-      const cfgPath = join(ROOT, 'config.json');
-      const c = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
+      const c = existsSync(CONFIG_PATH) ? JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) : {};
       c.repos = { ...(c.repos || {}), [repoName]: cwd.replace(/\\/g, '/') };
-      writeFileSync(cfgPath, JSON.stringify(c, null, 2) + '\n');
+      mkdirSync(dirname(CONFIG_PATH), { recursive: true }); // ~/.unified-mem may not exist yet on a fresh plugin install
+      writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2) + '\n');
     } catch { /* concurrent session may have won the write; harmless */ }
     try {
       const cardPath = join(VAULT, 'repos', `${repoName}.md`);

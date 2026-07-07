@@ -4,10 +4,10 @@
 // Usage: node scripts/init.mjs   (vault location: UNIFIED_MEM_VAULT_DIR env,
 // then vault_dir in config.json, then ~/.unified-mem/vault)
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { ROOT, CONFIG, DEFAULT_VAULT } from './vault.mjs';
+import { ROOT, CONFIG, CONFIG_PATH, DEFAULT_VAULT } from './vault.mjs';
 
 const expandHome = p => p.replace(/^~(?=[\\/]|$)/, homedir());
 // deliberately skip the legacy in-checkout fallback: init's whole job is the split
@@ -37,8 +37,9 @@ if (!existsSync(join(target, '.git'))) {
   console.log(`vault already a git repo: ${target}`);
 }
 
-const cfgPath = join(ROOT, 'config.json');
+const cfgPath = CONFIG_PATH;
 if (!existsSync(cfgPath)) {
+  mkdirSync(dirname(cfgPath), { recursive: true });
   writeFileSync(cfgPath, JSON.stringify({ vault_dir: target.replace(/\\/g, '/'), repos: {} }, null, 2) + '\n');
   console.log(`wrote ${cfgPath} (vault_dir + empty repos map)`);
 } else if (!CONFIG.vault_dir && !process.env.UNIFIED_MEM_VAULT_DIR) {

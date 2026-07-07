@@ -8,8 +8,8 @@
 // Usage:  node scripts/improve.mjs [--iterations N | --forever] [--runs N] [--questions N] [--model m]
 // Log:    improve/log.jsonl (one JSON line per iteration, hypothesis, scores, verdict)
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { ROOT, VAULT, loadConfig } from './vault.mjs';
+import { join, dirname } from 'node:path';
+import { ROOT, VAULT, CONFIG_PATH, loadConfig } from './vault.mjs';
 import { runEval, defaultQuestionFile } from '../eval/run.mjs';
 
 const argv = process.argv.slice(2);
@@ -35,9 +35,9 @@ const evalOpts = {
     process.exit(1);
   }
 }
-const CONFIG_PATH = join(ROOT, 'config.json');
 const LOG_DIR = join(VAULT, 'improve');
 mkdirSync(LOG_DIR, { recursive: true });
+mkdirSync(dirname(CONFIG_PATH), { recursive: true }); // ensure the config dir exists before we back it up / write it
 const log = entry => appendFileSync(join(LOG_DIR, 'log.jsonl'), JSON.stringify(entry) + '\n');
 
 // Knob grid: one-change-at-a-time neighbors of the current config (hill climbing).
@@ -84,7 +84,7 @@ for (let i = 1; i <= ITER; i++) {
   tried.add(h.knob + '=' + h.value);
 
   console.log(`\n[${i}] HYPOTHESIS: ${h.knob}=${h.value} (was ${get(cfg, h.knob)}) improves retrieval`);
-  const backup = readFileSync(CONFIG_PATH, 'utf8');
+  const backup = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, 'utf8') : JSON.stringify(cfg, null, 2);
   set(cfg, h.knob, h.value);
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2)); // IMPLEMENT
 

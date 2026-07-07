@@ -147,16 +147,28 @@ Six live views at `localhost:7777`:
 
 ## <img src="docs/icons/info.svg" width="22" height="22"> Install
 
-**Try it first (60 seconds, nothing touches your setup):**
+**As a plugin (recommended, two commands).** Inside Claude Code:
+
+```
+/plugin marketplace add kirti34n/unified-mem
+/plugin install unified-mem@unified-mem
+```
+
+That wires up all three hooks and the `vault_search` / `vault_remember` MCP tools for every repo, now and in the future. Your vault lives in `~/.unified-mem/vault` (outside the plugin, so it survives updates). Needs Node 22.13+ on your PATH. The plugin covers the in-session parts (inject memory, queue finished sessions); to turn those queued sessions into notes and run nightly upkeep, also start the worker and consolidator (next section, or schedule them per the [FAQ](docs/FAQ.md)).
+
+**Try the dashboard first (60 seconds, no install):**
 
 ```bash
 git clone https://github.com/kirti34n/unified-mem && cd unified-mem
 node scripts/init.mjs   # creates your vault: its own git repo, separate from this checkout
-node scripts/seed.mjs   # three weeks of demo history to explore
+node scripts/seed.mjs   # six weeks of fictional demo history to explore
 node scripts/dashboard.mjs   # then open http://localhost:7777
 ```
 
-**Attach it to your sessions.** Three hooks in `~/.claude/settings.json` cover every repo you have and every repo you create later (merge into an existing `"hooks"` block; use the path you cloned to):
+<details>
+<summary><b>Manual install</b> (without the plugin system)</summary>
+
+Three hooks in `~/.claude/settings.json` cover every repo you have and every repo you create later (merge into an existing `"hooks"` block; use the path you cloned to):
 
 ```jsonc
 {
@@ -171,11 +183,12 @@ node scripts/dashboard.mjs   # then open http://localhost:7777
 }
 ```
 
-**Optional: enable the conversational tools.** The hooks already inject memory with no MCP setup, but registering the MCP server adds `vault_search` (pull a note on demand) and `vault_remember` (save a preference mid-conversation, "remember that I prefer pnpm"):
+The conversational tools are optional (the hooks already inject memory without them). Register the MCP server to add `vault_search` and `vault_remember`:
 
 ```bash
 claude mcp add --scope user vault-search -- node "/path/to/unified-mem/scripts/mcp-server.mjs"
 ```
+</details>
 
 **Turn on the learning loop, and import your history.** Backfill is the best part: your vault starts loaded with months of your own debugging instead of empty.
 

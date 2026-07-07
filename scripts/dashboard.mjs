@@ -4,8 +4,8 @@
 // no polling, relative vendor paths) that renders offline from file:// or Pages.
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, existsSync } from 'node:fs';
-import { join, extname } from 'node:path';
-import { openDb, todaySpendUsd, loadConfig, CONFIG, ROOT, VAULT } from './vault.mjs';
+import { join, extname, dirname } from 'node:path';
+import { openDb, todaySpendUsd, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
 
 const PORT = Number(process.env.PORT || 7777);
 const db = openDb();
@@ -112,12 +112,12 @@ createServer((req, res) => {
         try {
           const { name } = JSON.parse(body);
           if (!name || typeof name !== 'string') throw new Error('name required');
-          const cfgPath = join(ROOT, 'config.json');
-          const c = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
+          const c = existsSync(CONFIG_PATH) ? JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) : {};
           const d = new Set(c.disabled_repos || []);
           d.has(name) ? d.delete(name) : d.add(name);
           c.disabled_repos = [...d];
-          writeFileSync(cfgPath, JSON.stringify(c, null, 2) + '\n');
+          mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+          writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2) + '\n');
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ name, enabled: !d.has(name) }));
         } catch (e) { res.writeHead(400); res.end(e.message); }

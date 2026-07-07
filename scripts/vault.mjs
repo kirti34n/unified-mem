@@ -24,8 +24,14 @@ const DEFAULTS = {
   personal_budget_chars: 800, preference_cap: 30,
   repos: {}, disabled_repos: [],
 };
+// config.json lives in a stable home dir (~/.unified-mem) so it survives plugin
+// updates, which replace the ephemeral plugin install dir. A legacy in-checkout
+// config.json is still honored, so existing manual installs keep working unchanged.
+export const CONFIG_PATH = existsSync(join(ROOT, 'config.json'))
+  ? join(ROOT, 'config.json')
+  : join(homedir(), '.unified-mem', 'config.json');
 export function loadConfig() {
-  try { return { ...DEFAULTS, ...JSON.parse(readFileSync(join(ROOT, 'config.json'), 'utf8')) }; }
+  try { return { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }; }
   catch { return DEFAULTS; }
 }
 export const CONFIG = loadConfig();

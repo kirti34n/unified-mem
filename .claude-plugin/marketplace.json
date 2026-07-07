@@ -1,0 +1,14 @@
+{
+  "name": "unified-mem",
+  "owner": { "name": "Zagrius", "url": "https://github.com/kirti34n" },
+  "metadata": {
+    "description": "Cross-repo evolving memory for Claude Code (hooks + MCP + live dashboard)."
+  },
+  "plugins": [
+    {
+      "name": "unified-mem",
+      "source": "./",
+      "description": "Cross-repo memory for Claude Code: notes that learn from outcomes, self-invalidate on code change, and show their work on a live dashboard."
+    }
+  ]
+}
