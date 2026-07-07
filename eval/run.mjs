@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { CONFIG, ROOT, VAULT } from '../scripts/vault.mjs';
+import { CONFIG, ROOT, VAULT, openDb } from '../scripts/vault.mjs';
 
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
 const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
@@ -21,6 +21,21 @@ export function defaultQuestionFile(demo = false) {
 
 export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, model = CONFIG.eval_model, quiet = false, file = null, demo = false } = {}) {
   const qs = JSON.parse(readFileSync(file || defaultQuestionFile(demo), 'utf8')).slice(0, questions);
+  // Arm-A preflight: if the retriever injects nothing while the vault has notes,
+  // memory is not actually active and arm A would silently equal arm B: every
+  // number the eval produces would be a lie. Abort loudly instead.
+  if (arms.includes('A')) {
+    const hasNotes = openDb().prepare("SELECT COUNT(*) c FROM notes WHERE status != 'archived'").get().c > 0;
+    if (hasNotes) {
+      const pre = spawnSync(process.execPath, [join(ROOT, 'scripts', 'retrieve.mjs')], {
+        input: JSON.stringify({ session_id: 'eval-preflight', cwd: ROOT }),
+        encoding: 'utf8', timeout: 30_000,
+        env: { ...process.env, UNIFIED_MEM_NO_CAPTURE: '1' },
+      });
+      if (!String(pre.stdout).includes('MEMORY CATALOG'))
+        throw new Error('eval preflight failed: retrieve.mjs produced no output while the vault has notes; hooks/memory are not active, arm A would silently equal arm B');
+    }
+  }
   const rows = [];
   for (const q of qs) for (const arm of arms) for (let r = 0; r < runs; r++) {
     const t0 = Date.now();
