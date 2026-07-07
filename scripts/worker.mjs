@@ -5,7 +5,9 @@
 import { readFileSync, readdirSync, unlinkSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, CONFIG, ROOT, NOTES_DIR, SECRET_RE } from './vault.mjs';
+import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, CONFIG, ROOT, NOTES_DIR, SECRET_RE } from './vault.mjs';
+
+const NOTE_TYPES = ['recovery', 'strategy', 'optimization', 'decision', 'convention'];
 
 const argv = process.argv.slice(2);
 const MODEL = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : CONFIG.reflector_model;
@@ -36,8 +38,8 @@ function transcriptText(path, maxChars = 60_000) {
 // Verifiable-outcome heuristic (R5). LLM judge only fills gaps in Phase 3+.
 function detectOutcome(text) {
   const tail = text.slice(-8000);
-  if (/(\d+ (passed|passing)|all tests pass|tests? (pass|green)|build succeeded|✓|verified working)/i.test(tail)
-    && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success';
+  if (/(\d+ (passed|passing)|all tests pass|tests? (pass|green)|build succeeded|verified working)/i.test(tail)
+    && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success'; // note: bare ✓ deliberately NOT a signal — Claude Code output is full of them
   if (/([1-9]\d* (failed|failing)|build failed|tests? fail|FATAL|unhandled exception)/i.test(tail)) return 'failure';
   return 'indeterminate';
 }
@@ -50,11 +52,15 @@ function scoreSession(db, sessionId, outcome, text, repo = 'unknown') {
   const r = outcome === 'success' ? 1 : 0;
   const injected = db.prepare('SELECT i.note_id, n.q_value, n.entities, n.title FROM injections i JOIN notes n ON n.id=i.note_id WHERE i.session_id=?').all(sessionId);
   const ts = new Date().toISOString();
+  // contribution is measured against the ASSISTANT's own output only — the injected
+  // note text appears in the transcript context, so matching the full transcript
+  // would score every injected note as "contributing" (self-reinforcement).
+  const assistantText = (text.split('\n').filter(l => l.startsWith('[assistant]')).join(' ') || text).toLowerCase();
   let updates = 0;
   for (const n of injected) {
-    // ponytail: contribution = did the note's terms surface in the session? LLM judge later.
+    // ponytail: contribution = did the note's terms surface in the assistant's work? LLM judge later.
     const terms = tokenize(n.entities + ' ' + n.title);
-    const hits = terms.filter(t => text.toLowerCase().includes(t)).length;
+    const hits = terms.filter(t => assistantText.includes(t)).length;
     const c = Math.min(1, hits / Math.max(3, terms.length * 0.5));
     if (c === 0) continue;
     let dq = CONFIG.q_alpha * c * (r - n.q_value);
@@ -129,8 +135,14 @@ function reflect(db, entry, text) {
   let written = 0;
   for (const m of String(res.stdout).matchAll(/<<<NOTE\r?\n([\s\S]*?)\r?\nNOTE>>>/g)) {
     const note = (m[1].trim() + '\n').replace(/^q_value:.*$/m, 'q_value: 0.50'); // new notes start neutral (R2)
-    const id = /^id:\s*(\S+)/m.exec(note)?.[1];
-    if (!id) continue;
+    // schema gate: reflector output is untrusted — reject anything malformed
+    const parsed = parseNote(note);
+    const id = parsed?.id;
+    if (!id || !/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/.test(id) || !parsed.title || !parsed.body
+      || !NOTE_TYPES.includes(parsed.type)) {
+      console.error(`dropped ${id || '(no id)'}: failed schema validation (type must be one of: ${NOTE_TYPES.join('|')})`);
+      continue;
+    }
     if (SECRET_RE.test(note)) { console.error(`dropped ${id}: secret pattern detected`); continue; }
     if (db.prepare('SELECT 1 FROM notes WHERE id=?').get(id)) continue;
     const dir = join(NOTES_DIR, id.slice(0, 4), id.slice(5, 7));

@@ -49,4 +49,4 @@ createServer((req, res) => {
   } catch {
     res.writeHead(404); res.end('not found');
   }
-}).listen(PORT, () => console.log(`unified-mem dashboard → http://localhost:${PORT}`));
+}).listen(PORT, '127.0.0.1', () => console.log(`unified-mem dashboard → http://localhost:${PORT}`)); // localhost only: the vault is private

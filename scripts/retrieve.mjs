@@ -20,7 +20,7 @@ try {
     basename(cwd),
     git('git branch --show-current'),
     git('git log -5 --format=%s'),
-    git('git diff --name-only HEAD~5 2>NUL') || git('git diff --name-only'),
+    git('git diff --name-only HEAD~5') || git('git diff --name-only'),
   ].join(' '));
 
   const db = openDb();

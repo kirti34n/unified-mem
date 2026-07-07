@@ -40,6 +40,10 @@ const set = (o, p, v) => { const ks = p.split('.'); ks.slice(0, -1).reduce((x, k
 
 // score: correctness first, then fewer output chars (cheaper), then faster
 const scoreOf = s => s.A.correct_rate * 1000 - s.A.median_chars / 1000 - s.A.median_ms / 100000;
+// noise guard: single-run char/latency jitter must not drive config changes.
+// Accept only if correctness strictly improves, or ties with ≥15% fewer output chars.
+const beats = (s, b) => s.A.correct_rate > b.A.correct_rate + 1e-9 ||
+  (Math.abs(s.A.correct_rate - b.A.correct_rate) < 1e-9 && s.A.median_chars < b.A.median_chars * 0.85);
 
 const tried = new Set();
 try { for (const line of readFileSync(join(LOG_DIR, 'log.jsonl'), 'utf8').split('\n')) { const j = JSON.parse(line); if (j.knob) tried.add(j.knob + '=' + j.value); } } catch { }
@@ -75,7 +79,7 @@ for (let i = 1; i <= ITER; i++) {
   try {
     const r = runEval(evalOpts); // TEST (fresh claude -p sessions read the new config)
     summary = r.summary; score = scoreOf(summary);
-    if (score > bestScore) { verdict = 'accept'; best = r; bestScore = score; }
+    if (beats(summary, best.summary)) { verdict = 'accept'; best = r; bestScore = score; }
     else { verdict = 'revert'; writeFileSync(CONFIG_PATH, backup); }
   } catch (e) { writeFileSync(CONFIG_PATH, backup); console.error('  eval failed:', e.message); }
   console.log(`  TEST: correct ${summary ? (summary.A.correct_rate * 100).toFixed(0) + '%' : '?'} · score ${score?.toFixed(1) ?? '?'} vs best ${bestScore.toFixed(1)} → ${verdict.toUpperCase()}`);

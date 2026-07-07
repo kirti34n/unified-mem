@@ -1,20 +1,30 @@
 {
-  "weights": { "sim": 0.40, "q": 0.30, "recency": 0.15, "validity": 0.15 },
+  "weights": {
+    "sim": 0.4,
+    "q": 0.3,
+    "recency": 0.15,
+    "validity": 0.15
+  },
   "k": 5,
   "max_inject_chars": 10000,
   "recency_half_life_days": 30,
   "decay_factor_per_week": 0.95,
   "decay_after_unused_days": 7,
-  "archive_below_q": 0.20,
+  "archive_below_q": 0.2,
   "archive_unused_days": 60,
   "active_cap_per_repo": 300,
   "q_alpha": 0.3,
   "q_delta_cap": 0.15,
-  "q_clamp": [0.05, 0.95],
+  "q_clamp": [
+    0.05,
+    0.95
+  ],
   "reflector_model": "claude-sonnet-5",
   "eval_model": "claude-haiku-4-5-20251001",
   "repos": {
     "my-api": "/path/to/my-api",
     "my-web-app": "/path/to/my-web-app"
-  }
+  },
+  "verify_model": "claude-haiku-4-5-20251001",
+  "verify_cap": 5
 }

@@ -16,6 +16,7 @@ const DEFAULTS = {
   archive_below_q: 0.20, archive_unused_days: 60, active_cap_per_repo: 300,
   q_alpha: 0.3, q_delta_cap: 0.15, q_clamp: [0.05, 0.95],
   reflector_model: 'claude-sonnet-5', eval_model: 'claude-haiku-4-5-20251001',
+  verify_model: 'claude-haiku-4-5-20251001', verify_cap: 5,
   repos: {},
 };
 export function loadConfig() {
@@ -136,7 +137,9 @@ function ftsSim(db, queryTerms) {
 // score = w.sim·similarity + w.q·q_value + w.recency·recency + w.validity·validity  (PLAN §4.2)
 export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
   const rows = db.prepare('SELECT * FROM notes').all();
-  const w = CONFIG.weights;
+  const raw = CONFIG.weights;
+  const wsum = raw.sim + raw.q + raw.recency + raw.validity || 1;
+  const w = { sim: raw.sim / wsum, q: raw.q / wsum, recency: raw.recency / wsum, validity: raw.validity / wsum }; // any config normalizes to 1
   const sims = ftsSim(db, queryTerms);
   const q = new Set(queryTerms);
   return rows.map(n => {
