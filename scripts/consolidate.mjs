@@ -100,9 +100,19 @@ ${noteText}`;
       log.run(ts, 'verify', n.id, `Verified against current code → restored to active. ${reason}`, diff);
       counts.verify = (counts.verify || 0) + 1;
     } else {
-      const diff = updateNoteFile(db, n.id, { status: 'archived' });
-      log.run(ts, 'archive', n.id, `Verification failed → archived. ${reason}`, diff);
-      counts.archive++;
+      // two strikes before archive: a single cheap-model misjudgment must not
+      // destroy real knowledge. First STALE only records the strike; the note
+      // stays needs-review (injected demoted + labeled) until a later run confirms.
+      const firstStrike = db.prepare(`SELECT 1 FROM consolidations WHERE op='verify-stale-1' AND note_id=?
+        AND ts > COALESCE((SELECT MAX(ts) FROM consolidations WHERE op='verify' AND note_id=?), '')`).get(n.id, n.id);
+      if (!firstStrike) {
+        log.run(ts, 'verify-stale-1', n.id, `Verification says stale (strike 1 of 2, kept as needs-review). ${reason}`, null);
+        counts.stale1 = (counts.stale1 || 0) + 1;
+      } else {
+        const diff = updateNoteFile(db, n.id, { status: 'archived' });
+        log.run(ts, 'archive', n.id, `Verification failed twice → archived. ${reason}`, diff);
+        counts.archive++;
+      }
     }
   }
 }
