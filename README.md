@@ -227,7 +227,7 @@ The design principle: **cold start gets a map, details load on demand.**
 - **Every prompt** (UserPromptSubmit): the prompt itself is the query, the strongest signal available, injected adjacent to the decision point where models actually use context. Deduplicated against everything already injected this session, behind a frequency-aware precision gate: only query terms appearing in at most 30% of notes count as evidence (in a vault of fixes, words like "fix" and "session" match everything and mean nothing), and a note must contain at least two such rare terms. Chatty prompts correctly inject nothing.
 - **Explicit pull**: the `vault_search` MCP tool, for interrogating the vault directly.
 
-All paths apply a relevance floor: a note must be meaningfully relevant or have proven high utility, otherwise nothing is injected. This is the best-evidenced rule in the memory literature: measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default, not a failure.
+All paths apply a relevance floor: a note must be meaningfully relevant or have proven high utility, otherwise nothing is injected. This is the best-evidenced rule in the memory literature: measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default, not a failure. The Metrics view tracks the abstention rate, and technical prompts that match nothing are logged to `index/gaps.jsonl`: that gap list is the vault's known blind spots, and the only honest evidence base for ever adding embeddings.
 
 ```
 score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
@@ -268,7 +268,7 @@ Guardrails keep scores honest: the clamp, the per-session cap, the verifiable-ou
 
 Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to needs-review. A verification pass then reads the current code and decides: claims still hold means restored to active with fresh provenance, code moved on means archived with the reason logged. A 72-hour backoff prevents notes citing hot files from burning the nightly verification budget. Every step appears in the Consolidation view as a diff. This converts the worst failure mode of any memory system, confidently applying outdated fixes, into a visible, self-healing review queue.
 
-The same nightly job also runs a contradiction arbiter on flagged near-duplicate pairs, classifying each as DUPLICATE (merge manually), UPDATE (one supersedes the other), or COEXISTING (keep both); mechanical newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones. It regenerates entity hub pages (`entities/*.md`, one page per shared concept, notes sorted by usefulness) and the repo cards (`repos/*.md`) that power cold-start injection.
+The same nightly job also runs a contradiction arbiter on flagged near-duplicate pairs, classifying each as DUPLICATE (merge manually), UPDATE (one supersedes the other), or COEXISTING (keep both); mechanical newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones. It auto-links the knowledge graph with two zero-cost edge types validated by the Obsidian ecosystem, notes citing the same file and notes sharing two or more entities (capped at four links per note so hubs carry the fan-out). And it regenerates entity hub pages (`entities/*.md`) and the repo cards (`repos/*.md`) that power cold-start injection.
 </details>
 
 <details>
@@ -315,6 +315,8 @@ Copy `config.example.json` to `config.json`; defaults apply for anything omitted
 | `archive_below_q` / `archive_unused_days` | `0.20` / `60` | forgetting policy |
 | `q_alpha` / `q_delta_cap` / `q_clamp` | `0.3` / `0.15` / `[.05,.95]` | Q-update guardrails |
 | `contribution_judge` | `llm` | `llm` for the pinned judge, `heuristic` for zero LLM calls |
+| `daily_budget_usd` | `5` | hard daily cap on pipeline LLM spend (reflect, judge, verify, arbiter) |
+| `max_reflections_per_run` | `10` | reflections per worker drain; excess stays queued for the next run |
 | `reflector_model` | sonnet | model that writes notes (quality matters here) |
 | `eval_model` / `verify_model` | haiku | cheap pinned models for eval, verification, judging |
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |
@@ -349,7 +351,7 @@ Only through the channel you already use: headless `claude -p` calls (reflection
 <details>
 <summary><b>What does this cost to run?</b></summary>
 
-Per real session with a determinate outcome: one reflection call (sonnet by default) and one small judge call (haiku). Per night: up to `verify_cap` verification calls plus up to three arbiter calls, all haiku. Internal calls are never re-captured, so there are no loops, and tiny transcripts are skipped. Set `contribution_judge: "heuristic"` and a cheaper `reflector_model` to reduce cost further.
+Every pipeline LLM call goes through one budget-guarded path: cost is read from the CLI's own accounting into a local ledger (`index/cost-ledger.jsonl`), the Metrics view shows today's spend against the `daily_budget_usd` cap, and when the cap is reached the pipeline stops calling models until tomorrow (scoring and consolidation code keep running free). Tier routing sends small sessions to haiku and reserves the big reflector model for large transcripts. Per real session with a determinate outcome: one reflection call and one small judge call. Per night: up to `verify_cap` verification calls (with a 72-hour per-note backoff) plus up to three arbiter calls, all haiku. Internal calls are never re-captured, so there are no loops; tiny transcripts are skipped; a worker drain reflects at most `max_reflections_per_run` sessions. Set `contribution_judge: "heuristic"` for zero judge calls.
 </details>
 
 <details>
@@ -361,7 +363,7 @@ That is what the forgetting machinery is for: reflector selectivity on the way i
 <details>
 <summary><b>Can a weird session poison the vault?</b></summary>
 
-Defenses in order: transcripts are wrapped as data in the reflector prompt; reflector output passes a schema gate (valid id format, title, body, and one of the five allowed types); notes are written in factual voice, never instructions; secrets are regex-blocked; new notes start at neutral Q and must earn influence through verified outcomes; injections tell Claude to verify against current code; and everything is a git-tracked markdown file you can diff, revert, or delete. Treat the vault like code: review what lands in it, especially before sharing a vault with a team.
+Defenses in order: transcripts are wrapped as data in the reflector prompt; reflector output passes a schema gate (valid id format, title, body, and one of the five allowed types); every note is stamped with provenance by the worker itself, never trusted from LLM output (author, machine, source session, trust class, the consensus defense in the memory-poisoning literature); notes are written in factual voice, never instructions; secrets are regex-blocked; new notes start at neutral Q and must earn influence through verified outcomes; injections tell Claude to verify against current code; and everything is a git-tracked markdown file you can diff, revert, or delete. Treat the vault like code: review what lands in it, especially before sharing a vault with a team.
 </details>
 
 <details>
@@ -388,7 +390,12 @@ The design rules are distilled from published work. **ACE**: evolving playbooks,
 - [x] Live dashboard with Prism diff views
 - [x] A/B eval harness (per-question cwd, negative probes, real-set defaults) and gated improve loop
 - [x] Transcript backfill
-- [ ] Team sharing via git pull requests
+- [x] Cost engineering: per-call ledger, hard daily budget, tier routing, reflection cap per drain
+- [x] Auto-linked knowledge graph (co-file and shared-entity edges, no embeddings)
+- [x] Telemetry: abstention rate on the dashboard, vault-gap log for unmatched technical prompts
+- [x] Provenance stamping on every note (author, machine, session, trust class)
+- [ ] Team sharing via git pull requests (recipe validated by research: one-note-per-file, PR gates, machine-local scores in a sidecar)
+- [ ] Utilization calibration: citation telemetry plus nightly sampled leave-one-out ablation
 - [ ] Embeddings and MMR: deliberately skipped. Measured evidence says BM25 wins on technical vocabulary at this corpus size and top-k redundancy is near zero with atomic deduped notes. Revisit only if logged retrieval misses accumulate.
 
 ## License

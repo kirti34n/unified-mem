@@ -315,6 +315,10 @@ function rMetrics(m){
       <div class="delta" style="color:${staleOk?'var(--good)':'var(--crit)'}">${staleOk?'✓ under':'✗ over'} 5% target</div></div>
     <div class="card tile"><div class="lbl">Mean Q (non-archived)</div><div class="val">${S.summary.mean_q.toFixed(2)}</div>
       <div class="note">${S.summary.retrievals} total retrievals logged</div></div>
+    <div class="card tile"><div class="lbl">Abstention rate</div><div class="val">${((S.summary.abstention_rate??0)*100).toFixed(0)}%</div>
+      <div class="note">sessions injected nothing · ${S.summary.gaps??0} gap prompts logged</div></div>
+    <div class="card tile"><div class="lbl">Spend today</div><div class="val">$${(S.summary.spend_today_usd??0).toFixed(2)}</div>
+      <div class="note">pipeline LLM calls · budget $${S.summary.daily_budget_usd??'?'} / day</div></div>
   </div>
   <div class="card"><h2>Vault size trend</h2><div class="sub">Healthy shape: growth then plateau · linear growth means forgetting is broken.</div>
   <div id="mt"></div><div class="legend" id="ml"></div>

@@ -3,9 +3,9 @@
 // decision point get used more than ones buried at session start.
 // Aggressive floor (prompt_min_sim) + dedupe vs everything already injected this
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG } from './vault.mjs';
+import { readFileSync, appendFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { openDb, scoreNotes, tokenize, CONFIG, ROOT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -24,18 +24,36 @@ try {
   // A chatty prompt with no rare technical terms therefore injects NOTHING.
   const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
   const dfCap = Math.max(2, total * 0.3);
-  const rare = new Set(terms.filter(t => {
-    try {
-      const c = db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get(`"${t.replace(/"/g, '')}"`).c;
-      return c > 0 && c <= dfCap;
-    } catch { return false; }
+  const df = new Map(terms.map(t => {
+    try { return [t, db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get(`"${t.replace(/"/g, '')}"`).c]; }
+    catch { return [t, 0]; }
   }));
-  if (rare.size < 2) process.exit(0);
+  const rare = new Set(terms.filter(t => df.get(t) > 0 && df.get(t) <= dfCap));   // present but discriminative: usable evidence
+  const novel = terms.filter(t => df.get(t) === 0 && t.length > 4);               // vault has never seen these: the strongest gap signal
+  const logGap = () => {
+    if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return;
+    try {
+      appendFileSync(join(ROOT, 'index', 'gaps.jsonl'), JSON.stringify({
+        ts: new Date().toISOString(), repo: basename(hook.cwd || ''),
+        novel: novel.slice(0, 8), rare: [...rare].slice(0, 8),
+      }) + '\n');
+    } catch { }
+  };
+  if (rare.size < 2) {
+    if (novel.length >= 3) logGap(); // technical prompt about something the vault knows nothing about
+    process.exit(0);
+  }
   const top = scoreNotes(db, terms, k + seen.size)
     .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim)
     .filter(n => tokenize([n.title, n.entities, n.body].join(' ')).filter(w => rare.has(w)).length >= 2)
     .slice(0, k);
-  if (!top.length) process.exit(0); // the common, correct outcome
+  if (!top.length) {
+    // the common, correct outcome. But rare terms that matched no note = a vault
+    // gap: log it (unless the emptiness came from session dedupe). The gap list is
+    // the evidence base for reflector tuning and the only honest embeddings trigger.
+    if (seen.size === 0) logGap();
+    process.exit(0);
+  }
 
   let out = 'Vault notes matching this prompt (cross-repo knowledge; verify against current code):\n';
   for (const n of top) {

@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { openDb, ROOT } from './vault.mjs';
+import { openDb, todaySpendUsd, CONFIG, ROOT } from './vault.mjs';
 
 const PORT = Number(process.env.PORT || 7777);
 const db = openDb();
@@ -23,6 +23,17 @@ function state() {
       const m = db.prepare('SELECT SUM(stale_retrievals) s, SUM(retrievals) r FROM metrics_daily').get();
       return m.r ? m.s / m.r : 0;
     })(),
+    abstention_rate: (() => {
+      const s = db.prepare('SELECT COUNT(*) c FROM sessions WHERE demo=0').get().c;
+      const w = db.prepare('SELECT COUNT(DISTINCT session_id) c FROM injections WHERE demo=0').get().c;
+      return s ? (s - w) / s : 0;
+    })(),
+    gaps: (() => {
+      try { return readFileSync(join(ROOT, 'index', 'gaps.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length; }
+      catch { return 0; }
+    })(),
+    spend_today_usd: todaySpendUsd(),
+    daily_budget_usd: CONFIG.daily_budget_usd,
   };
   return {
     generated_at: new Date().toISOString(),

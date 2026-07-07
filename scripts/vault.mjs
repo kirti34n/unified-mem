@@ -1,9 +1,10 @@
 // Shared vault library: config, schema, note parsing, FTS5 reindex, scored retrieval,
 // note-file frontmatter updates + diff generation for the consolidation log.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const DB_PATH = join(ROOT, 'index', 'vault.db');
@@ -18,6 +19,7 @@ const DEFAULTS = {
   reflector_model: 'claude-sonnet-5', eval_model: 'claude-haiku-4-5-20251001',
   verify_model: 'claude-haiku-4-5-20251001', verify_cap: 5,
   prompt_k: 2, prompt_min_sim: 0.15, start_min_sim: 0.2, contribution_judge: 'llm',
+  daily_budget_usd: 5, max_reflections_per_run: 10,
   repos: {},
 };
 export function loadConfig() {
@@ -202,3 +204,40 @@ export function makeDiff(path, before, after) {
 }
 
 export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
+
+// ---- LLM pipeline calls: one path, budget-guarded, cost-ledgered ----
+const LEDGER = join(ROOT, 'index', 'cost-ledger.jsonl');
+
+export function todaySpendUsd() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    return readFileSync(LEDGER, 'utf8').split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(e => e && e.ts?.startsWith(today))
+      .reduce((s, e) => s + (e.usd || 0), 0);
+  } catch { return 0; }
+}
+
+// Every headless pipeline call (reflect, judge, verify, arbiter) goes through here:
+// hard daily budget cap, cost recorded from the CLI's own accounting, MEMORY_OFF so
+// the call can never recurse into the memory system. Returns {text, usd} or null.
+export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000 } = {}) {
+  const spent = todaySpendUsd();
+  if (spent >= CONFIG.daily_budget_usd) {
+    console.warn(`[budget] $${spent.toFixed(2)} spent today >= $${CONFIG.daily_budget_usd} cap, skipping ${kind}`);
+    return null;
+  }
+  const r = spawnSync(`claude -p --model ${model} --output-format json --strict-mcp-config`, {
+    input, encoding: 'utf8', shell: true, timeout, cwd,
+    env: { ...process.env, MEMORY_OFF: '1' },
+  });
+  if (r.status !== 0) { console.error(`${kind} failed (${r.status}): ${String(r.stderr || '').slice(0, 200)}`); return null; }
+  let j;
+  try { j = JSON.parse(r.stdout); } catch { return { text: String(r.stdout || ''), usd: 0 }; }
+  const usd = j.total_cost_usd ?? 0;
+  try {
+    mkdirSync(join(ROOT, 'index'), { recursive: true });
+    appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
+  } catch { }
+  return { text: String(j.result ?? ''), usd };
+}

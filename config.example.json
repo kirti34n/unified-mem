@@ -29,5 +29,7 @@
   "verify_cap": 5,
   "prompt_k": 2,
   "prompt_min_sim": 0.15,
-  "contribution_judge": "llm"
+  "contribution_judge": "llm",
+  "daily_budget_usd": 5,
+  "max_reflections_per_run": 10
 }
