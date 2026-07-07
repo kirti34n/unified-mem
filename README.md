@@ -184,12 +184,13 @@ Five views, each making one mechanism visible:
 <details>
 <summary><b>1. Retrieval, which notes get injected?</b></summary>
 
-Two push paths, one shared scorer:
+The design principle: **cold start gets a map, details load on demand.**
 
-- **Session start**: query built from your repo name, branch, last 5 commit subjects, and recently changed paths (broad context).
-- **Every prompt** (UserPromptSubmit): query is the prompt itself, the strongest signal available, injected adjacent to the decision point where models actually use it. Deduplicated against everything already injected this session.
+- **Session start**: injects a compact **memory catalog** (note counts per repo), plus **this repo's card**, a nightly-generated overview of what the repo is, its recent git activity, and what the vault knows about it, plus only the notes that pass the relevance floor for the current git context. The session begins knowing *what exists and what can be pulled*, not buried under speculative detail.
+- **Every prompt** (UserPromptSubmit): the prompt itself is the query, the strongest signal available, injected adjacent to the decision point where models actually use it. Deduplicated against everything already injected this session, behind a **frequency-aware precision gate**: only query terms appearing in ≤30% of notes count as evidence (in a vault of fixes, words like "fix" and "session" match everything and mean nothing), and a note must contain at least two such rare terms. Chatty prompts correctly inject nothing.
+- **Explicit pull**: the `vault_search` MCP tool, for when the model or you want to interrogate the vault directly.
 
-Both apply a **relevance floor**: a note must be topically relevant or have proven high utility, otherwise NOTHING is injected. This is the best-evidenced rule in the memory literature: measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default, not a failure.
+All paths apply a **relevance floor**: a note must be topically relevant or have proven high utility, otherwise NOTHING is injected. This is the best-evidenced rule in the memory literature: measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default, not a failure.
 
 ```
 score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
@@ -228,7 +229,7 @@ where `c` is a **pinned LLM judge** using a fixed coarse rubric (1 = the note's 
 
 Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to **needs-review**. Then a verification pass reads the *current* code and decides: claims still hold → restored to active with fresh provenance; code moved on → archived, with the reason logged. Every step appears in the Consolidation view as a diff. This converts the worst failure mode of any memory system, confidently applying outdated fixes, into a visible, self-healing review queue.
 
-The same nightly job also runs a **contradiction arbiter** on flagged near-duplicate pairs, classifying each as DUPLICATE (merge manually), UPDATE (one supersedes the other), or COEXISTING (keep both). Research shows mechanical newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones; classification avoids both errors. And it regenerates **entity hub pages** (`entities/*.md`), one page per shared concept listing its notes by learned usefulness, which is also what makes the vault's Obsidian graph navigable.
+The same nightly job also runs a **contradiction arbiter** on flagged near-duplicate pairs, classifying each as DUPLICATE (merge manually), UPDATE (one supersedes the other), or COEXISTING (keep both). Research shows mechanical newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones; classification avoids both errors. It regenerates **entity hub pages** (`entities/*.md`), one page per shared concept listing its notes by learned usefulness, which is also what makes the vault's Obsidian graph navigable. And it regenerates the **repo cards** (`repos/*.md`) that power the cold-start injection: per repo, a description pulled from its README, current branch, the last five commits, and the vault's best notes about it, so every new session starts with an accurate picture of what is there and what is happening.
 </details>
 
 <details>
@@ -337,8 +338,9 @@ The design rules are distilled from published work: **ACE** (evolving playbooks;
 
 ## 🗺️ Roadmap
 
+- [x] Cold-start catalog + nightly repo cards: sessions start with a map, not a data dump
 - [x] Push-path injection, FTS5/BM25 retrieval, injection logging
-- [x] Per-prompt just-in-time retrieval (UserPromptSubmit) with session dedupe + relevance floor
+- [x] Per-prompt just-in-time retrieval (UserPromptSubmit) with session dedupe + frequency-aware precision gate
 - [x] Reflection worker + verifiable-outcome Q scorer + pinned LLM contribution judge
 - [x] Nightly consolidation: decay · archive · git-diff invalidation · dedupe flagging
 - [x] LLM verify-pass: needs-review notes checked against current code, restored or archived

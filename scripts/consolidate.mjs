@@ -6,7 +6,7 @@
 //   METRICS     upsert today's metrics_daily row + enforce active cap report
 // Every content change writes a consolidations row with the exact diff (dashboard renders it).
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDb, reindexNotes, updateNoteFile, CONFIG, ROOT } from './vault.mjs';
 
@@ -172,6 +172,36 @@ for (const [e, ns] of Object.entries(byEntity)) {
   hubs++;
 }
 
+// REPO CARDS: per-repo overview pages, "what is there, what is happening, what the
+// vault knows". The SessionStart hook injects the current repo's card so every
+// session cold-starts with an accurate picture; details load on demand.
+const cardsDir = join(ROOT, 'repos');
+mkdirSync(cardsDir, { recursive: true });
+let cards = 0;
+for (const [name, repoPath] of Object.entries(CONFIG.repos)) {
+  if (!existsSync(repoPath)) continue;
+  const git = args => (spawnSync('git', args, { cwd: repoPath, encoding: 'utf8' }).stdout || '').trim();
+  let desc = '';
+  for (const f of ['README.md', 'readme.md']) {
+    try {
+      desc = (readFileSync(join(repoPath, f), 'utf8')
+        .split(/\r?\n/).find(l => l.trim() && !/^[#!<\[\-*|`]/.test(l.trim())) || '').trim().slice(0, 180);
+      if (desc) break;
+    } catch { }
+  }
+  const recent = git(['log', '-5', '--format=%cs %s']).split('\n').filter(Boolean);
+  const branch = git(['branch', '--show-current']);
+  const rnotes = db.prepare("SELECT id,title,type,q_value,status FROM notes WHERE status != 'archived' AND (','||repos||',') LIKE ? ORDER BY q_value DESC").all(`%,${name},%`);
+  const card = `# ${name}\n\n${desc || '(no description found)'}\n\n` +
+    `- path: ${repoPath}\n- branch: ${branch || '?'}\n` +
+    (recent.length ? `\n**Recent activity:**\n${recent.map(l => `- ${l}`).join('\n')}\n` : '') +
+    (rnotes.length ? `\n**Vault knowledge (${rnotes.length} notes, by usefulness):**\n${rnotes.slice(0, 6)
+      .map(n => `- [[${n.id}]] (${n.type}, Q ${n.q_value.toFixed(2)}${n.status === 'needs-review' ? ', NEEDS REVIEW' : ''}): ${n.title}`).join('\n')}\n`
+      : '\n**Vault knowledge:** none yet\n');
+  writeFileSync(join(cardsDir, `${name}.md`), card);
+  cards++;
+}
+
 // METRICS upsert for today + cap report
 const cur = db.prepare('SELECT * FROM notes').all();
 const active = cur.filter(n => n.status === 'active').length;
@@ -187,4 +217,4 @@ const over = Object.entries(perRepo).filter(([, c]) => c > CONFIG.active_cap_per
 if (over.length) console.warn('OVER CAP:', over.map(([r, c]) => `${r}:${c}`).join(' '));
 
 reindexNotes(db);
-console.log(`consolidated: ${counts.invalidate} invalidated · ${counts.verify || 0} verified-restored · ${counts.decay} decayed · ${counts.archive} archived · ${counts.dedupe} dedupe-candidates · ${counts.arbiter || 0} pair-verdicts · ${hubs} entity hubs · vault ${active}a/${review}r/${archived}x`);
+console.log(`consolidated: ${counts.invalidate} invalidated · ${counts.verify || 0} verified-restored · ${counts.decay} decayed · ${counts.archive} archived · ${counts.dedupe} dedupe-candidates · ${counts.arbiter || 0} pair-verdicts · ${hubs} entity hubs · ${cards} repo cards · vault ${active}a/${review}r/${archived}x`);

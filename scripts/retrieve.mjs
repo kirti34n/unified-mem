@@ -2,8 +2,8 @@
 // and log the injection. Never blocks a session: any failure exits 0 silently.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
-import { openDb, scoreNotes, tokenize, CONFIG } from './vault.mjs';
+import { basename, join } from 'node:path';
+import { openDb, scoreNotes, tokenize, CONFIG, ROOT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -24,14 +24,29 @@ try {
   ].join(' '));
 
   const db = openDb();
-  // Relevance floor: injecting nothing beats injecting noise. Measured 2025 result:
-  // even irrelevant-but-plausible context degrades task performance, so a note must
-  // be topically relevant (sim>0) or have PROVEN high utility (q>=0.7) to be injected.
-  const top = scoreNotes(db, query).filter(n => n.sim > 0 || n.q_value >= 0.7);
-  if (!top.length) process.exit(0);
+  const repoName = basename(cwd);
 
-  let out = 'Cross-repo team knowledge from past sessions (a unified layer on top of this project\'s own memory, verify against current code before relying on it):\n';
+  // COLD START = a compact CATALOG of what the unified memory holds, plus this
+  // repo's overview card. Details load on demand (per-prompt hook / vault_search),
+  // never five speculative notes up front.
+  const perRepo = {};
+  for (const row of db.prepare("SELECT repos FROM notes WHERE status != 'archived'").all())
+    for (const r of (row.repos || '').split(',').map(s => s.trim()).filter(Boolean))
+      perRepo[r] = (perRepo[r] || 0) + 1;
+  if (!Object.keys(perRepo).length) process.exit(0); // empty vault: inject nothing
+
+  let out = 'Unified cross-repo memory (a layer on top of this project\'s own memory). This is the cold-start catalog; matching notes auto-load with each prompt, and vault_search pulls explicitly. Verify anything against current code.\n';
+  out += `\nMEMORY CATALOG (notes per repo): ${Object.entries(perRepo).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} (${c})`).join(' · ')}\n`;
+  try {
+    const card = readFileSync(join(ROOT, 'repos', `${repoName}.md`), 'utf8');
+    out += `\nTHIS REPO, what is there and what is happening:\n${card.replace(/^# .*\r?\n/, '').trim().slice(0, 1400)}\n`;
+  } catch { /* no card yet for this repo */ }
+
+  // Relevance floor: injecting nothing beats injecting noise. A note must be
+  // topically relevant (sim>0) or have PROVEN high utility (q>=0.7) to ride along.
+  const top = scoreNotes(db, query).filter(n => n.sim > 0 || n.q_value >= 0.7);
   const used = [];
+  if (top.length) out += '\nMost relevant notes for this repo right now:\n';
   for (const n of top) {
     const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]' : '';
     const block = `\n## ${n.title}${flag}\n(type: ${n.type} · repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;

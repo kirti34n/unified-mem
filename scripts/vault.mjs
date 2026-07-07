@@ -122,8 +122,11 @@ export function reindexNotes(db) {
   return n;
 }
 
+// Stopwords: common English words carry no retrieval signal but match every note
+// via the FTS OR-query, letting weakly-relevant notes pass the floor on chatty prompts.
+const STOP = new Set(('the and for with that this have what was are you our all can how its not but now see use when why where which them they then than there here from will your know only also more some other into over after before again based make made need want just like been being were does doing done should could would about them very much still').split(' '));
 export const tokenize = s =>
-  [...new Set(String(s).toLowerCase().split(/[^a-z0-9@]+/).filter(w => w.length > 2))];
+  [...new Set(String(s).toLowerCase().split(/[^a-z0-9@]+/).filter(w => w.length > 2 && !STOP.has(w)))];
 
 const VALIDITY = { active: 1.0, 'needs-review': 0.4, archived: 0 };
 

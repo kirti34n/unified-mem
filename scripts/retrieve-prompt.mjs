@@ -18,8 +18,22 @@ try {
     .all(sessionId).map(r => r.note_id));
   const terms = tokenize(prompt + ' ' + basename(hook.cwd || ''));
   const k = CONFIG.prompt_k;
+  // Precision gate, frequency-aware: in a vault of fixes, words like "fix", "load",
+  // "session" appear in most notes and carry zero signal. Only query terms present
+  // in <=30% of notes count as evidence, and a note must contain >=2 of them.
+  // A chatty prompt with no rare technical terms therefore injects NOTHING.
+  const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
+  const dfCap = Math.max(2, total * 0.3);
+  const rare = new Set(terms.filter(t => {
+    try {
+      const c = db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get(`"${t.replace(/"/g, '')}"`).c;
+      return c > 0 && c <= dfCap;
+    } catch { return false; }
+  }));
+  if (rare.size < 2) process.exit(0);
   const top = scoreNotes(db, terms, k + seen.size)
     .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim)
+    .filter(n => tokenize([n.title, n.entities, n.body].join(' ')).filter(w => rare.has(w)).length >= 2)
     .slice(0, k);
   if (!top.length) process.exit(0); // the common, correct outcome
 
