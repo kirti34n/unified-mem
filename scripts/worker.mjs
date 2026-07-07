@@ -76,7 +76,14 @@ function scoreSession(db, sessionId, outcome, text, repo = 'unknown') {
   return updates;
 }
 
-const REFLECT_PROMPT = (transcript, gitlog, nearest) => `You are distilling a completed coding session into knowledge notes for a team vault.
+const REFLECT_PROMPT = (transcript, gitlog, nearest) => `You are distilling a completed coding session into knowledge notes for a UNIFIED CROSS-REPO vault.
+
+This vault is a layer ON TOP of Claude Code's built-in per-project memory. The session's
+own project memory (auto-memory, CLAUDE.md) already keeps project-local context: current
+task state, short-lived plans, this repo's structure. Do NOT duplicate that layer.
+Write ONLY knowledge that earns a place in the unified layer: transferable across repos
+or sessions — technology gotchas, verified fixes others could hit again, patterns that
+generalize, durable team conventions and decisions.
 
 Write a note ONLY for durable, reusable knowledge:
 - recovery: a failure and its verified fix (cite commit/files)

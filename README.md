@@ -2,9 +2,9 @@
 
 # 🧠 unified-mem
 
-**A cross-repo evolving memory system for Claude Code.**
+**The unified memory layer for Claude Code — on top of its per-project memory, across all your repositories.**
 
-Every session starts cold. This fixes that — permanently, across *all* your repositories.
+Claude Code already remembers *within* a project. This unifies what it learns *across* projects — scored by real outcomes, invalidated when code changes, observable on a live dashboard.
 
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)](#-quickstart-5-minutes)
 [![Node 22.5+](https://img.shields.io/badge/node-%E2%89%A522.5-blue)](https://nodejs.org)
@@ -21,9 +21,11 @@ Every session starts cold. This fixes that — permanently, across *all* your re
 
 ## 🧭 What is this, in plain words?
 
-When you use Claude Code, each conversation ("session") starts with **no memory** of previous ones. You spend an afternoon hunting down a nasty bug, the session ends, and tomorrow — in the same repo or a different one — Claude has to rediscover everything from scratch.
+Claude Code is **not** amnesiac — it has [built-in memory](https://code.claude.com/docs/en/memory): each project gets an auto-memory directory that loads every session, `CLAUDE.md` files carry your instructions, and `--resume` continues past conversations. That layer works, and unified-mem does not replace it.
 
-**unified-mem is a shared notebook that all your sessions write to and read from.**
+But every project's memory is an **island**. Auto-memory is keyed to one repository — the afternoon you spent fixing a nasty race condition in `repo-A` is invisible to tomorrow's session in `repo-B`. And nothing in the built-in layer *measures* whether a remembered fact still helps, or notices that the code it describes was rewritten last week.
+
+**unified-mem is the shared, self-correcting notebook that sits above all the per-project memories** — one vault that every session, in every repo, writes to and reads from:
 
 - When a session **ends**, a background worker reads the transcript and writes down anything durable it learned — *"this bug had this fix"*, *"this project follows this convention"*, *"this approach worked"* — as small markdown files called **notes**.
 - When a new session **starts** (in *any* of your repositories), the most relevant notes are automatically shown to Claude before it begins. It starts the day already knowing what you learned last week, in every repo.
@@ -35,9 +37,20 @@ No databases to install, no npm packages, no cloud. Plain markdown files + Node'
 
 ## 🤔 The problem, precisely
 
-1. **Session amnesia** — every Claude Code session starts from zero. Yesterday's debugging is gone.
-2. **Cross-repo blindness** — a fix discovered in `repo-A` gets re-discovered from scratch in `repo-B`.
-3. **No learning loop** — even where notes exist (CLAUDE.md), nothing measures whether they *help*, and nothing removes what's stale.
+1. **Cross-repo blindness** — built-in memory is per-repository by design. A fix discovered in `repo-A` gets re-discovered from scratch in `repo-B`, `repo-C`, …
+2. **No learning loop** — nothing built-in measures whether a remembered fact actually *helps* the work; useful and useless memories are treated identically, forever.
+3. **No staleness handling** — nothing notices when the code a memory describes has changed. Stale memory silently misleads — it's worse than no memory.
+
+## 🧩 How it layers on Claude Code's built-in memory
+
+| Layer | Scope | Holds | Learns? | Staleness? |
+|---|---|---|---|---|
+| [Session transcripts](https://code.claude.com/docs/en/sessions) (`--resume`) | one conversation | full history | — | — |
+| [`CLAUDE.md` hierarchy](https://code.claude.com/docs/en/memory) | user / project | your *instructions* | — | manual |
+| [Auto-memory](https://code.claude.com/docs/en/memory) | **one repository** | project facts Claude saves | heuristic ("worth remembering") | none |
+| **unified-mem** (this) | **all repositories** | durable, verified knowledge | **Q-value from real outcomes** | **git-diff invalidation + re-verification** |
+
+**Division of labor:** project-local, ephemeral context (current task state, repo structure, short-lived plans) stays in the built-in per-project layer where it belongs. Durable, *transferable* knowledge — verified fixes, technology gotchas, patterns, conventions — is promoted into the unified vault. The reflector prompt enforces this split, so the layers complement instead of duplicating: session memory keeps a session coherent; the unified layer makes code generation accurate **everywhere**.
 
 ```mermaid
 flowchart LR
@@ -254,6 +267,12 @@ Copy `config.example.json` → `config.json` (defaults apply for anything omitte
 | `repos` | `{}` | `name → local path` map powering git-diff invalidation |
 
 ## 🧯 Troubleshooting & FAQ
+
+<details>
+<summary><b>Does this replace CLAUDE.md or auto-memory?</b></summary>
+
+No — it sits on top of them. Keep writing instructions in `CLAUDE.md`; keep auto-memory on (it's per-project working memory and the default since it ships enabled). unified-mem only takes what *transcends* a single project — the reflector is explicitly told to skip project-local ephemera that the built-in layer already owns, and to capture only durable, transferable knowledge. If you disabled auto-memory, unified-mem still works; they're independent.
+</details>
 
 <details>
 <summary><b>Notes aren't being injected</b></summary>

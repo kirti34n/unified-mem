@@ -18,12 +18,20 @@
 
 ---
 
-## 2. Problem Statement
+## 2. Problem Statement — corrected premise
 
-1. **Session amnesia** — every Claude Code session starts cold.
-2. **Cross-repo blindness** — a fix discovered in `repo-A` is re-discovered from scratch in `repo-B`.
-3. **No learning loop** — nothing measures whether notes help; nothing removes what's stale. Stale memory is *worse than no memory*.
-4. **No observability** *(new)* — even a working memory loop is invisible: you can't see what was injected, whether it helped, what got merged or invalidated. The dashboard makes the loop inspectable.
+Claude Code sessions are NOT amnesiac. Built-ins already cover the per-session and
+per-project layer: **auto-memory** (per-project memory directory, loaded each session),
+**CLAUDE.md** (instructions hierarchy), **`--resume`/`--continue`** (session transcripts).
+unified-mem is NOT a replacement for those — it is the **unified layer on top of them**,
+covering exactly what they don't:
+
+1. **Cross-repo blindness** — built-in memory is keyed by working directory. A fix discovered in `repo-A` never reaches `repo-B`; every project's memory is an island. The unified layer shares durable knowledge across all repos.
+2. **No learning loop** — nothing built-in measures whether a remembered fact actually *helps*; nothing scores usefulness from session outcomes. Here, notes earn Q-value from verifiable outcomes and decay when they stop contributing.
+3. **No staleness handling** — no built-in mechanism notices that the code a memory describes has changed. Stale memory is *worse than no memory*; the unified layer git-diff-invalidates and re-verifies notes against the code they cite.
+4. **No observability** — even a working memory loop is invisible: you can't see what was injected, whether it helped, what got merged or invalidated. The dashboard makes the loop inspectable.
+
+**Division of labor:** project-local, ephemeral context (current task state, repo structure, short-lived plans) stays in the built-in per-project memory; durable, transferable knowledge (verified fixes, technology gotchas, patterns, conventions) is promoted into the unified vault. The reflector prompt enforces this split so the two layers complement instead of duplicating each other — session memory keeps the session coherent, the unified layer makes the whole code-generation flow accurate across every repo.
 
 ---
 

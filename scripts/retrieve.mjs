@@ -27,7 +27,7 @@ try {
   const top = scoreNotes(db, query);
   if (!top.length) process.exit(0);
 
-  let out = 'Team knowledge notes from past sessions (verify against current code before relying on them):\n';
+  let out = 'Cross-repo team knowledge from past sessions (a unified layer on top of this project\'s own memory — verify against current code before relying on it):\n';
   const used = [];
   for (const n of top) {
     const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW — the underlying code changed; verify before use]' : '';
