@@ -1,0 +1,8 @@
+# your data — never commit
+notes/
+index/
+queue/
+eval/results/
+improve/
+config.json
+STOP

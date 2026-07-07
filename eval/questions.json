@@ -1,0 +1,17 @@
+[
+  {
+    "id": "jwt-401",
+    "q": "In the api-core repo, what causes intermittent 401 bursts under load during token refresh, and what is the exact fix? Answer in one short paragraph. If you don't know, say so plainly.",
+    "expect": "(SETNX|redis[^.]{0,30}lock|mutual exclusion)"
+  },
+  {
+    "id": "error-envelope",
+    "q": "What is our team's convention for API error response bodies (the exact JSON shape), and which helper function enforces it? If you don't know, say so plainly.",
+    "expect": "(httpError|\"?error\"?[^.]{0,50}code)"
+  },
+  {
+    "id": "playwright-flake",
+    "q": "Why did our Playwright e2e jobs flake in CI with ECONNREFUSED, and what fixed it? If you don't know, say so plainly.",
+    "expect": "(?=[\\s\\S]*port)[\\s\\S]*shard"
+  }
+]
