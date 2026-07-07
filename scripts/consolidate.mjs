@@ -8,7 +8,8 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { openDb, reindexNotes, updateNoteFile, runClaude, CONFIG, VAULT } from './vault.mjs';
+import { createHash } from 'node:crypto';
+import { openDb, reindexNotes, updateNoteFile, parseNote, runClaude, CONFIG, ROOT, VAULT } from './vault.mjs';
 
 const db = openDb();
 reindexNotes(db);
@@ -44,10 +45,43 @@ for (const n of notes.filter(n => n.status === 'active' && n.files)) {
   }
 }
 
+// REFERENCE STALENESS: ingested docs go stale by content hash, not git history.
+// Source missing → archive. Source changed → needs-review (or re-ingest with
+// --auto-reingest). source_path/source_hash live in the note file frontmatter.
+{
+  const reingested = new Set();
+  for (const n of notes.filter(n => n.type === 'reference' && n.status !== 'archived')) {
+    let meta;
+    try { meta = parseNote(readFileSync(n.path, 'utf8'), n.path); } catch { continue; }
+    if (!meta?.source_path) continue;
+    if (!existsSync(meta.source_path)) {
+      const diff = updateNoteFile(db, n.id, { status: 'archived' });
+      log.run(ts, 'archive', n.id, `Source document missing (${meta.source_path}) → archived`, diff);
+      counts.archive++;
+      continue;
+    }
+    const h = createHash('sha256').update(readFileSync(meta.source_path)).digest('hex');
+    if (h === meta.source_hash) continue;
+    if (process.argv.includes('--auto-reingest')) {
+      if (reingested.has(meta.source_path)) continue; // one re-ingest per changed doc
+      reingested.add(meta.source_path);
+      spawnSync(process.execPath, [join(ROOT, 'scripts', 'ingest.mjs'), meta.source_path], { encoding: 'utf8' });
+      log.run(ts, 'reingest', n.id, `Source changed → re-ingested ${meta.source_path}`, null);
+      counts.reingest = (counts.reingest || 0) + 1;
+    } else if (n.status === 'active') {
+      const diff = updateNoteFile(db, n.id, { status: 'needs-review' });
+      log.run(ts, 'invalidate-doc', n.id, `Source document changed (${meta.source_path}) → needs-review; re-run ingest.mjs or consolidate with --auto-reingest`, diff);
+      counts.invalidate++;
+    }
+  }
+}
+
 // DECAY + ARCHIVE (R7). Idleness = time since the note last CONTRIBUTED to a scored
 // outcome (op='score'), not since it was last injected, otherwise a frequently-retrieved
 // but never-helpful note refreshes its own last_used forever and can never decay.
-for (const n of notes.filter(n => n.status !== 'archived')) {
+// Preferences are exempt: they are explicit user statements, not outcome-driven;
+// retention is manual, bounded by preference_cap.
+for (const n of notes.filter(n => n.status !== 'archived' && n.type !== 'preference')) {
   const lastScore = db.prepare("SELECT MAX(ts) t FROM q_history WHERE note_id=? AND op='score'").get(n.id).t;
   const lastDecayOrScore = db.prepare("SELECT MAX(ts) t FROM q_history WHERE note_id=?").get(n.id).t;
   const idleDays = Math.min(days(lastScore), days(n.created));            // true idleness → archive decision
@@ -259,6 +293,9 @@ const perRepo = {};
 cur.filter(n => n.status === 'active').forEach(n => (n.repos || '').split(',').forEach(r => perRepo[r] = (perRepo[r] || 0) + 1));
 const over = Object.entries(perRepo).filter(([, c]) => c > CONFIG.active_cap_per_repo);
 if (over.length) console.warn('OVER CAP:', over.map(([r, c]) => `${r}:${c}`).join(' '));
+const prefCount = cur.filter(n => n.type === 'preference' && n.status === 'active').length;
+if (prefCount > CONFIG.preference_cap)
+  console.warn(`PREFERENCE CAP: ${prefCount} active preferences > ${CONFIG.preference_cap}; every one is pinned into every session, prune with intent`);
 
 reindexNotes(db);
 console.log(`consolidated: ${counts.invalidate} invalidated · ${counts.verify || 0} verified-restored · ${counts.decay} decayed · ${counts.archive} archived · ${counts.dedupe} dedupe-candidates · ${counts.arbiter || 0} pair-verdicts · ${counts.autolink || 0} autolinks · ${hubs} entity hubs · ${cards} repo cards · vault ${active}a/${review}r/${archived}x`);
