@@ -231,7 +231,15 @@ export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000 } 
     input, encoding: 'utf8', shell: true, timeout, cwd,
     env: { ...process.env, MEMORY_OFF: '1' },
   });
-  if (r.status !== 0) { console.error(`${kind} failed (${r.status}): ${String(r.stderr || '').slice(0, 200)}`); return null; }
+  if (r.status !== 0) {
+    // with --output-format json the CLI reports errors on stdout ({is_error, result}), stderr stays empty
+    let detail = String(r.stderr || '').slice(0, 200);
+    try { detail = JSON.parse(r.stdout).result?.slice(0, 200) || detail; } catch { }
+    console.error(`${kind} failed (${r.status}): ${detail}`);
+    if (/model|not found|invalid|no access/i.test(detail))
+      console.error(`hint: model '${model}' was rejected. Check reflector_model / verify_model / eval_model in config.json against the models list at docs.claude.com`);
+    return null;
+  }
   let j;
   try { j = JSON.parse(r.stdout); } catch { return { text: String(r.stdout || ''), usd: 0 }; }
   const usd = j.total_cost_usd ?? 0;
