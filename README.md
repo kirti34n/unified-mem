@@ -8,6 +8,8 @@
 [![Node 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<img src="docs/demo.gif" width="90%" alt="A fresh Claude Code session answering a past 401-burst incident straight from the vault, citing two linked notes across repos, before opening a single file">
+
 **[Click through the live dashboard](https://kirti34n.github.io/unified-mem/demo-site/)**: the real UI, no install, fictional data.
 
 <img src="docs/screenshots/sessions.png" width="82%" alt="The dashboard: every session, what memory injected, and the usefulness score each note earned">
