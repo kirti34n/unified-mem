@@ -200,7 +200,8 @@ export function updateNoteFile(db, id, changes) {
   let fm = fmMatch[2];
   for (const [key, val] of Object.entries(changes)) {
     const re = new RegExp(`^${key}:.*$`, 'm');
-    fm = re.test(fm) ? fm.replace(re, `${key}: ${val}`) : fm + `\n${key}: ${val}`;
+    // replacer FUNCTION: a value containing $&, $' etc. must not expand as a replacement pattern
+    fm = re.test(fm) ? fm.replace(re, () => `${key}: ${val}`) : fm + `\n${key}: ${val}`;
   }
   const fmStart = fmMatch.index + fmMatch[1].length;
   const after = before.slice(0, fmStart) + fm + before.slice(fmStart + fmMatch[2].length);
