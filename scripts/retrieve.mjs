@@ -26,17 +26,40 @@ try {
   const db = openDb();
   const repoName = basename(cwd);
 
-  // COLD START = a compact CATALOG of what the unified memory holds, plus this
-  // repo's overview card. Details load on demand (per-prompt hook / vault_search),
-  // never five speculative notes up front.
+  // Dedupe vs notes already injected this session: resume/compact re-fires this
+  // hook, and duplicate injection rows would double a note's per-session Q updates.
+  const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')
+    .all(sessionId).map(r => r.note_id));
+
   const perRepo = {};
   for (const row of db.prepare("SELECT repos FROM notes WHERE status != 'archived'").all())
     for (const r of (row.repos || '').split(',').map(s => s.trim()).filter(Boolean))
       perRepo[r] = (perRepo[r] || 0) + 1;
-  if (!Object.keys(perRepo).length) process.exit(0); // empty vault: inject nothing
+  const anyNotes = db.prepare("SELECT COUNT(*) c FROM notes WHERE status != 'archived'").get().c;
+  if (!anyNotes) process.exit(0); // empty vault: inject nothing
 
-  let out = 'Unified cross-repo memory (a layer on top of this project\'s own memory). This is the cold-start catalog; matching notes auto-load with each prompt, and vault_search pulls explicitly. Verify anything against current code.\n';
-  out += `\nMEMORY CATALOG (notes per repo): ${Object.entries(perRepo).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} (${c})`).join(' · ')}\n`;
+  const used = [];
+  let out = 'Unified cross-repo memory (a layer on top of this project\'s own memory). This is the cold-start catalog; matching notes auto-load with each prompt, vault_search pulls explicitly, and vault_remember saves a personal preference. Verify anything against current code.\n';
+
+  // PERSONAL PREFERENCES: pinned, no similarity floor. Preferences apply in every
+  // repo by definition; they are explicit user statements, not retrieved guesses.
+  const prefs = db.prepare("SELECT * FROM notes WHERE type='preference' AND status='active' ORDER BY q_value DESC, created DESC").all()
+    .filter(n => !seen.has(n.id));
+  let pinned = '';
+  const pinnedNotes = [];
+  for (const p of prefs) {
+    const line = `- ${p.body.replace(/\s+/g, ' ').trim()}\n`;
+    if (pinned.length + line.length > (CONFIG.personal_budget_chars ?? 800)) break;
+    pinned += line;
+    pinnedNotes.push(p);
+  }
+  if (pinned) out += `\nPERSONAL PREFERENCES (apply in every repo):\n${pinned}`;
+  used.push(...pinnedNotes);
+
+  // COLD START = a compact CATALOG of what the unified memory holds, plus this
+  // repo's overview card. Details load on demand, never five speculative notes.
+  if (Object.keys(perRepo).length)
+    out += `\nMEMORY CATALOG (notes per repo): ${Object.entries(perRepo).sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} (${c})`).join(' · ')}\n`;
   try {
     const card = readFileSync(join(VAULT, 'repos', `${repoName}.md`), 'utf8');
     out += `\nTHIS REPO, what is there and what is happening:\n${card.replace(/^# .*\r?\n/, '').trim().slice(0, 1400)}\n`;
@@ -45,13 +68,8 @@ try {
   // Relevance floor: injecting nothing beats injecting noise. A note must be
   // meaningfully relevant (sim >= start_min_sim, one shared token is not enough)
   // or have PROVEN high utility (q>=0.7) to ride along with the catalog.
-  // Dedupe vs notes already injected this session: resume/compact re-fires this
-  // hook, and duplicate injection rows would double a note's per-session Q updates.
-  const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')
-    .all(sessionId).map(r => r.note_id));
   const top = scoreNotes(db, query)
-    .filter(n => (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id));
-  const used = [];
+    .filter(n => (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id) && n.type !== 'preference');
   if (top.length) out += '\nMost relevant notes for this repo right now:\n';
   for (const n of top) {
     const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]' : '';
