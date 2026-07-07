@@ -21,7 +21,7 @@ const fail = (step, r) => {
 };
 
 let r = run(['scripts/seed.mjs']);
-if (!/7 notes indexed/.test(r.stdout)) fail('seed (expected "7 notes indexed")', r);
+if (!/14 notes indexed/.test(r.stdout)) fail('seed (expected "14 notes indexed")', r);
 
 r = run(['scripts/retrieve.mjs'], JSON.stringify({ session_id: 'smoke-start', cwd: tmpdir() }));
 if (!r.stdout.includes('MEMORY CATALOG')) fail('session-start catalog', r);
