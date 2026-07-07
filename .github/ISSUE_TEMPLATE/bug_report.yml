@@ -1,0 +1,35 @@
+name: Bug report
+description: Something is not working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands or actions. If a hook is involved, run it manually and paste the output.
+      placeholder: |
+        1. node scripts/...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: hookoutput
+    attributes:
+      label: Hook / debug output
+      description: Set UNIFIED_MEM_DEBUG=1 and paste the relevant lines from <vault>/index/hook-errors.jsonl, or the stdout of the script you ran.
+      render: shell
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version (node --version), and Claude Code version.
+      placeholder: Windows 11, Node 24.3.0, Claude Code 2.x
+    validations:
+      required: true

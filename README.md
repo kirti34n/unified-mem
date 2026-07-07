@@ -5,7 +5,7 @@
 **Claude Code remembers per project. unified-mem makes what it learns follow you across every repo: scored by real outcomes, invalidated when your code changes, observable on a live dashboard.**
 
 [![CI](https://github.com/kirti34n/unified-mem/actions/workflows/ci.yml/badge.svg)](https://github.com/kirti34n/unified-mem/actions/workflows/ci.yml)
-[![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-blue)](https://nodejs.org)
+[![Node 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **[Click through the live dashboard](https://kirti34n.github.io/unified-mem/demo-site/)**: the real UI, no install, fictional data.
@@ -35,7 +35,7 @@ One vault of small markdown notes (one claim each, with commit and file provenan
 | Nightly job | Decays unused notes, re-verifies notes whose cited files changed in git, arbitrates near-duplicates, auto-links the knowledge graph, rebuilds repo cards |
 | Personal layer | `vault_remember` (MCP tool or CLI) pins your preferences into every session; `ingest.mjs` chunks your own docs so they surface when a prompt touches them |
 | Live dashboard | Every injection, every score change, every consolidation as a red/green diff, plus cost and abstention telemetry |
-| Eval harness + tuner | An A/B harness measures memory against a no-memory control, and a guarded loop tunes retrieval settings only on statistically meaningful wins |
+| Eval harness + tuner | An A/B harness measures memory against a no-memory control, and a guarded loop tunes retrieval settings only when a 14+ sample A/B shows a strict correctness improvement |
 
 Where it sits relative to what you already have:
 
@@ -48,7 +48,7 @@ Where it sits relative to what you already have:
 
 ## <img src="docs/icons/zap.svg" width="22" height="22"> How it helps you
 
-**Solved problems stay solved.** Type "why are these 401s intermittent under load?" and the note from the session that fixed it is in Claude's context before exploration starts: root cause, exact fix, commit hash, the gotcha about lock TTLs. In our measured run, a control session dug through the repo for 104 seconds and still failed a question memory answered in 11.
+**Solved problems stay solved.** Type "why are these 401s intermittent under load?" and the note from the session that fixed it is in Claude's context before exploration starts: root cause, exact fix, commit hash, the gotcha about lock TTLs. In our measured run, the control arm's slowest miss spent about 90 seconds searching a repo and still got the answer wrong, on a question memory answered from the note in about 12.
 
 **Say a preference once, keep it forever.** "Remember that I prefer pnpm" (mid-conversation via `vault_remember`, or `npm run remember` from a shell) pins that rule into every future session in every repo. Ingest your style guide once and the right section appears exactly when a prompt touches its topic.
 
@@ -124,15 +124,15 @@ Always factual voice with provenance, never instructions, always labeled to veri
 
 ## <img src="docs/icons/flask.svg" width="22" height="22"> Measured results
 
-Memory versus honest competition: the control arm had full access to the repositories and was free to re-derive every answer. Seven questions from real incidents across six repos, two runs each, pinned regex grading:
+Memory versus honest competition: the control arm had full access to the repositories and was free to re-derive every answer. Nine questions (six from real incidents, three negative probes) across five repos, two runs each, graded by pinned regex with hedged "I don't know" non-answers counted as failures:
 
-| | Memory | Control (repo access, no memory) |
+| | Memory | Control (repo access, unified-mem off) |
 |---|---|---|
-| Correct | **14/14 (100%)** | 8/14 (57%) |
-| Median latency | 11.9s | 12.1s |
-| "I don't know" honesty probe | passed | passed |
+| Correct | **15/18 (83%)** | 8/18 (44%) |
+| Median latency | 12.3s | 11.9s |
+| Negative probes (honesty) | 5/6 | 5/6 |
 
-Three incidents were answerable only from memory. The honesty probe matters: memory did not teach the model to fake confidence about things it never learned. Single vault, 14 samples per arm, so treat it as a demonstration; the harness ships in the box so you can measure your own history ([docs/EVAL.md](docs/EVAL.md)).
+The gap is the point: with full repo access the control re-derived the answer 44% of the time; with the matching note in context, 83%. Three incidents (a Windows kill-by-port fix, a hardcoded date filter, a SQLite busy-timeout) the control failed both attempts and memory answered both. One incident (a PowerShell dollar-swallow bug) neither arm got, because the vault holds no note for it: that is the honest shape of a real memory system, not a 100% headline. Latency is a wash, and memory did not degrade the honesty probes. This is one run of a nine-question, single-vault demonstration, not a field benchmark; the harness ships in the box so you can measure your own history ([docs/EVAL.md](docs/EVAL.md)).
 
 ## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
 
@@ -171,6 +171,12 @@ node scripts/dashboard.mjs   # then open http://localhost:7777
 }
 ```
 
+**Optional: enable the conversational tools.** The hooks already inject memory with no MCP setup, but registering the MCP server adds `vault_search` (pull a note on demand) and `vault_remember` (save a preference mid-conversation, "remember that I prefer pnpm"):
+
+```bash
+claude mcp add --scope user vault-search -- node "/path/to/unified-mem/scripts/mcp-server.mjs"
+```
+
 **Turn on the learning loop, and import your history.** Backfill is the best part: your vault starts loaded with months of your own debugging instead of empty.
 
 ```bash
@@ -188,8 +194,9 @@ Repos auto-register on their first session (and every hook is user-level), so ne
 | | scope | learns from outcomes | staleness handling |
 |---|---|---|---|
 | Claude Code [auto-memory](https://code.claude.com/docs/en/memory) | one repository | no | none |
-| [claude-mem](https://github.com/thedotmack/claude-mem) | per project | no | none |
-| [memsearch](https://milvus.io/blog/adding-persistent-memory-to-claude-code-with-the-lightweight-memsearch-plugin.md) | past-session search | no | none |
+| [claude-mem](https://github.com/thedotmack/claude-mem) | global store; per-project auto-recall (cross-project via manual search) | no | none |
+| [Mem0](https://docs.mem0.ai/integrations/claude-code) (Claude Code plugin) | cross-tool, cloud-first | write-time updates, not outcome-scored | contradiction resolution, not code-aware |
+| [memsearch](https://milvus.io/blog/adding-persistent-memory-to-claude-code-with-the-lightweight-memsearch-plugin.md) | per project (sessions + distilled notes) | no | none |
 | **unified-mem** | [all repositories](docs/MECHANISMS.md#the-layering-premise) | [judged and decayed](docs/MECHANISMS.md#3-q-learning-how-usefulness-is-earned) | [git-diff invalidation + re-verification](docs/MECHANISMS.md#4-staleness-the-biggest-accuracy-lever) |
 
 Factual and complementary: instructions stay in CLAUDE.md, project working memory stays in auto-memory, and the reflector is explicitly told to leave project-local context alone.
@@ -200,4 +207,4 @@ Factual and complementary: instructions stay in CLAUDE.md, project working memor
 
 ## <img src="docs/icons/shield.svg" width="22" height="22"> License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Bundled third-party components (PrismJS) are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

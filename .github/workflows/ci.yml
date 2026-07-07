@@ -6,10 +6,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        node: ['22.x', '24.x']
+        os: [ubuntu-latest, windows-latest]
+        # 22.13.0 is the floor: node:sqlite was flag-gated before it. Pin it exactly
+        # so the advertised minimum is actually exercised, not just the newest 22.x.
+        node: ['22.13.0', '24.x']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

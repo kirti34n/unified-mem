@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that unified-mem makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed change
+      description: What you would like it to do. If it touches retrieval, scoring, or consolidation, note how it stays zero-dependency and testable.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I have read docs/ROADMAP.md and this is not an explicit non-goal (hosted sync, vector-DB dependency, real-time team sync, indiscriminate auto-extraction).
+          required: true

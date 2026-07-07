@@ -2,6 +2,12 @@
 ### Implementation Plan + Live Visualization Layer
 *Version 1.1, 2026-07-07, this repo (`unified_mem`) IS the knowledge vault*
 
+> **Historical design document.** This is the original plan and rationale; parts of it
+> describe an earlier shape of the system (an in-checkout vault, two hooks, some interim
+> thresholds). For what actually shipped, see [MECHANISMS.md](MECHANISMS.md) (the
+> as-built reference), [CONFIG.md](CONFIG.md) (every knob), and [EVAL.md](EVAL.md).
+> Where this file and those disagree, those are correct.
+
 ---
 
 ## 1. Executive Summary

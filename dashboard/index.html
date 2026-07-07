@@ -238,7 +238,7 @@ function rGraph(m){
     draw(n);
     if(!n)return hideTip();
     showTip(n.entity?`<b>${esc(n.id)}</b><br>entity hub`:
-      `<b>${esc(n.note.title)}</b><br>type: ${n.note.type} · status: ${n.note.status}<br>Q ${n.note.q_value.toFixed(2)} · used ${n.note.access_count}× · repos: ${esc(n.note.repos)}`,e.clientX,e.clientY);};
+      `<b>${esc(n.note.title)}</b><br>type: ${esc(n.note.type)} · status: ${esc(n.note.status)}<br>Q ${n.note.q_value.toFixed(2)} · used ${n.note.access_count}× · repos: ${esc(n.note.repos)}`,e.clientX,e.clientY);};
   cv.onmouseleave=()=>{hideTip();draw();};
 }
 
@@ -298,7 +298,7 @@ function rQ(m){
   $('#ql').innerHTML=series.map(s=>`<span class="key"><span class="ln" style="background:${s.color}"></span>${esc(s.name)}${st[s.id]!=='active'?` (${st[s.id]})`:''}</span>`).join('');
   $('#qt').innerHTML='<tr><th>when</th><th>note</th><th>op</th><th>Q</th><th>reward</th></tr>'+
     S.q_history.slice().sort((a,b)=>b.ts.localeCompare(a.ts)).map(q=>
-    `<tr><td>${fmtTs(q.ts)}</td><td>${shortName(q.note_id)}</td><td>${q.op}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'·'}</td></tr>`).join('');
+    `<tr><td>${fmtTs(q.ts)}</td><td>${esc(shortName(q.note_id))}</td><td>${esc(q.op)}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'·'}</td></tr>`).join('');
 }
 
 /* ---------- Consolidation ---------- */
@@ -318,6 +318,7 @@ function rCons(m){
 
 /* ---------- Metrics ---------- */
 function spark(vals,w=84,h=26){
+  if(!vals||vals.length<2)return ''; // no trend to draw (fresh vault, or one metric day): render nothing, don't crash
   const mx=Math.max(...vals)||1,mn=Math.min(...vals);
   const p=vals.map((v,i)=>`${i/(vals.length-1)*w},${h-2-(v-mn)/((mx-mn)||1)*(h-6)}`);
   return `<svg width="${w}" height="${h}"><polyline fill="none" stroke="#898781" stroke-width="1.5" points="${p.join(' ')}"/><circle cx="${p.at(-1).split(',')[0]}" cy="${p.at(-1).split(',')[1]}" r="3" fill="#3987e5"/></svg>`;
@@ -326,7 +327,7 @@ function rMetrics(m){
   const M=S.metrics,last=M.at(-1)||{},wk=M.at(-8)||last;
   const stalePct=S.summary.stale_rate*100;
   const staleOk=stalePct<5;
-  const dAct=last.active-wk.active;
+  const dAct=(last.active||0)-(wk.active||0);
   m.innerHTML=`<h2>Metrics</h2><div class="sub">The accuracy targets from PLAN §6 · vault size must plateau (R7), stale retrievals stay under 5% (R9).</div>
   <div class="tiles">
     <div class="card tile"><div class="lbl">Active notes</div><div class="val">${S.summary.active}</div>

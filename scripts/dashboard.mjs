@@ -74,11 +74,17 @@ if (argv.includes('--export')) {
     .replace('poll();setInterval(poll,5000);', 'poll();')
     .replace('<span class="live"><span class="dot"></span>LIVE</span>',
       '<span class="live">static demo · fictional seed data · <a href="https://github.com/kirti34n/unified-mem" style="color:inherit">get the real thing</a></span>')
-    .replace('</head>', `<script>window.__STATE__=${JSON.stringify((() => {
+    .replace('</head>', () => {
       const s = state();
-      s.notes = s.notes.filter(n => n.scope !== 'personal'); // preferences and your docs never enter a shareable export
-      return s;
-    })())}</script>\n</head>`);
+      // preferences and your docs never enter a shareable export; strip absolute paths
+      // (note files and repo locations) so the export cannot leak the author's filesystem
+      s.notes = s.notes.filter(n => n.scope !== 'personal').map(({ path, ...n }) => n);
+      s.repos_ui = s.repos_ui.map(r => ({ ...r, path: null }));
+      // escape '<' so a note body containing </script> cannot terminate the inline
+      // script tag and inject live HTML (stored XSS on the published page)
+      const json = JSON.stringify(s).replace(/</g, '\\u003c');
+      return `<script>window.__STATE__=${json}</script>\n</head>`;
+    });
   writeFileSync(join(outDir, 'index.html'), html);
   console.log(`static dashboard exported to ${outDir}`);
   process.exit(0);
@@ -86,12 +92,20 @@ if (argv.includes('--export')) {
 
 createServer((req, res) => {
   try {
+    // Host allowlist: defeats DNS-rebinding (a rebound name resolves to 127.0.0.1 but
+    // arrives with the attacker's Host), so a web page cannot read the private vault.
+    const host = (req.headers.host || '').split(':')[0];
+    if (host && host !== 'localhost' && host !== '127.0.0.1') { res.writeHead(403); return res.end('forbidden'); }
     const url = req.url.split('?')[0];
     if (url === '/api/state') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(state()));
     }
     if (url === '/api/toggle-repo' && req.method === 'POST') {
+      // CSRF guard: a cross-site fetch carries an Origin of the attacker's page; only
+      // same-origin (or no-Origin, e.g. curl) may mutate config.
+      const origin = req.headers.origin;
+      if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) { res.writeHead(403); return res.end('forbidden'); }
       let body = '';
       req.on('data', c => body += c);
       req.on('end', () => {

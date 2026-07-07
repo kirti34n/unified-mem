@@ -56,17 +56,25 @@ try {
     process.exit(0);
   }
 
+  // whole-note budget (a fraction of the session-start cap; the prompt path stays
+  // compact): drop a whole note rather than slicing one off mid-sentence.
+  const budget = Math.min(CONFIG.max_inject_chars, 6000);
   let out = 'Vault notes matching this prompt (cross-repo knowledge; verify against current code):\n';
+  const injected = [];
   for (const n of top) {
     const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW: underlying code changed]' : '';
-    out += `\n## ${n.title}${flag}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
+    const block = `\n## ${n.title}${flag}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
+    if (out.length + block.length > budget && injected.length) break;
+    out += block;
+    injected.push(n);
   }
-  process.stdout.write(out.slice(0, 6000));
+  if (!injected.length) process.exit(0);
+  process.stdout.write(out);
 
   if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0); // eval reads memory, never mutates retrieval state
   const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,0)');
   const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
   const today = new Date().toISOString().slice(0, 10);
-  top.forEach((n, i) => { inj.run(sessionId, n.id, 100 + i, n.score); touch.run(today, n.id); }); // rank 100+ = per-prompt injection
+  injected.forEach((n, i) => { inj.run(sessionId, n.id, 100 + i, n.score); touch.run(today, n.id); }); // rank 100+ = per-prompt injection
 } catch (e) { hookDebugLog('retrieve-prompt', e); /* memory must never block a prompt */ }
 process.exit(0);

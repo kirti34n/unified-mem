@@ -93,7 +93,9 @@ export function openDb() {
 // inline comments are stripped everywhere except title (titles may contain '#').
 const ARRAY_KEYS = new Set(['entities', 'repos', 'files', 'links']);
 export function parseNote(text, path = '') {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
+  // tolerate a leading UTF-8 BOM (Notepad / some PowerShell redirects add one),
+  // else the ^--- anchor misses and a hand-edited note silently drops from the index.
+  const m = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) return null;
   const meta = {};
   for (const line of m[1].split(/\r?\n/)) {
@@ -123,29 +125,43 @@ export function* walkNotes(dir = NOTES_DIR) {
 }
 
 export function reindexNotes(db) {
+  // last_used / access_count are written to the DB by the hooks but never mirrored
+  // into the note files, so a plain upsert from files would reset usage every run
+  // (silently degrading the recency term). Preserve the DB-side counters.
+  const prior = new Map(db.prepare('SELECT id, last_used, access_count FROM notes').all()
+    .map(r => [r.id, r]));
   const up = db.prepare(`INSERT OR REPLACE INTO notes
     (id,title,type,status,confidence,q_value,repos,entities,files,links,
      source_commit,created,last_used,last_validated,access_count,body,path,scope,trust)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const seen = [];
   let n = 0;
   for (const p of walkNotes()) {
     const note = parseNote(readFileSync(p, 'utf8'), p);
     if (!note?.id) continue;
+    const was = prior.get(note.id);
     const csv = x => Array.isArray(x) ? x.join(',') : (x ?? '');
     up.run(note.id, note.title ?? '', note.type ?? '', note.status ?? 'active',
       note.confidence ?? 'med', Number(note.q_value ?? 0.5), csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
-      note.id.slice(0, 10), note.last_used ?? null, note.last_validated ?? null,
-      Number(note.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared', note.trust ?? 'unknown');
+      note.id.slice(0, 10), note.last_used ?? was?.last_used ?? null, note.last_validated ?? null,
+      Number(note.access_count ?? was?.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared', note.trust ?? 'unknown');
+    seen.push(note.id);
     n++;
   }
+  // Reconcile deletions: a note whose file was removed on disk must not linger in
+  // the DB, else it keeps being injected and later crashes decay via its missing path.
+  if (seen.length) db.prepare(`DELETE FROM notes WHERE id NOT IN (${seen.map(() => '?').join(',')})`).run(...seen);
+  else db.prepare('DELETE FROM notes').run();
   // rebuild FTS5 index (small vault: full rebuild is simpler than sync triggers).
   // Transactional: a concurrent hook read must never observe a missing notes_fts.
+  // Archived notes are excluded: they are never retrieved, and indexing them only
+  // inflates document-frequency and can suppress a live note that shares a term.
   db.exec('BEGIN');
   try {
     db.exec('DROP TABLE IF EXISTS notes_fts;');
     db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
-    db.prepare('INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes').run();
+    db.prepare("INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes WHERE status != 'archived'").run();
     db.exec('COMMIT');
   } catch (e) { try { db.exec('ROLLBACK'); } catch { } throw e; }
   return n;
@@ -202,7 +218,9 @@ export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
 export function updateNoteFile(db, id, changes) {
   const row = db.prepare('SELECT path FROM notes WHERE id=?').get(id);
   if (!row?.path) return null;
-  const before = readFileSync(row.path, 'utf8');
+  let before;
+  try { before = readFileSync(row.path, 'utf8'); }
+  catch { return null; } // file deleted out from under us: skip; reindex reconciles the row
   const fmMatch = /^(---\r?\n)([\s\S]*?)(\r?\n---)/.exec(before);
   if (!fmMatch) return null;
   let fm = fmMatch[2];
@@ -257,6 +275,23 @@ export function validateNote(parsed, allowedTypes = NOTE_TYPES) {
   if (!parsed.title) return 'missing title';
   if (!parsed.body) return 'missing body';
   if (!allowedTypes.includes(parsed.type)) return `type must be one of: ${allowedTypes.join('|')}`;
+  return null;
+}
+
+// A duplicated frontmatter key is a poisoning trick: the reflector output is forced
+// to neutral q_value/scope by a per-line rewrite, but a SECOND q_value line survives
+// it and, since parsing is last-key-wins, the note can index at Q 0.95 and ride the
+// utility bypass into every session. Reject any note whose frontmatter repeats a key.
+export function duplicateFrontmatterKey(text) {
+  const m = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!m) return null;
+  const seen = new Set();
+  for (const line of m[1].split(/\r?\n/)) {
+    const k = /^([\w-]+):/.exec(line)?.[1];
+    if (!k) continue;
+    if (seen.has(k)) return k;
+    seen.add(k);
+  }
   return null;
 }
 
@@ -334,16 +369,32 @@ export function todaySpendUsd() {
   } catch { return 0; }
 }
 
+// Record one pipeline call's cost. Shared by runClaude and the eval harness so every
+// LLM call (including eval, which can't route through runClaude because it needs
+// memory ON for arm A) lands in the same ledger and counts against the daily cap.
+export function appendLedger(kind, model, usd) {
+  try {
+    mkdirSync(join(VAULT, 'index'), { recursive: true });
+    appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
+  } catch { }
+}
+
 // Every headless pipeline call (reflect, judge, verify, arbiter) goes through here:
 // hard daily budget cap, cost recorded from the CLI's own accounting, MEMORY_OFF so
 // the call can never recurse into the memory system. Returns {text, usd} or null.
-export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000 } = {}) {
+// `tools` restricts what the headless model may do while chewing on UNTRUSTED
+// transcript/note content: 'none' denies every built-in tool (reflect/judge need
+// zero tools), an array is an explicit read-only allowlist (verify reads code).
+const BUILTIN_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite'];
+export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000, tools = null } = {}) {
   const spent = todaySpendUsd();
   if (spent >= CONFIG.daily_budget_usd) {
     console.warn(`[budget] $${spent.toFixed(2)} spent today >= $${CONFIG.daily_budget_usd} cap, skipping ${kind}`);
     return null;
   }
-  const r = spawnSync(`claude -p --model ${model} --output-format json --strict-mcp-config`, {
+  const toolFlag = tools === 'none' ? ` --disallowed-tools ${BUILTIN_TOOLS.join(' ')}`
+    : Array.isArray(tools) ? ` --allowed-tools ${tools.join(' ')}` : '';
+  const r = spawnSync(`claude -p --model ${model} --output-format json --strict-mcp-config${toolFlag}`, {
     input, encoding: 'utf8', shell: true, timeout, cwd,
     env: { ...process.env, MEMORY_OFF: '1' },
   });
@@ -359,9 +410,6 @@ export function runClaude(kind, model, input, { cwd = ROOT, timeout = 180_000 } 
   let j;
   try { j = JSON.parse(r.stdout); } catch { return { text: String(r.stdout || ''), usd: 0 }; }
   const usd = j.total_cost_usd ?? 0;
-  try {
-    mkdirSync(join(VAULT, 'index'), { recursive: true });
-    appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
-  } catch { }
+  appendLedger(kind, model, usd);
   return { text: String(j.result ?? ''), usd };
 }

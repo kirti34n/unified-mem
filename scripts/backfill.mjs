@@ -1,10 +1,10 @@
 // Backfill: enqueue past Claude Code session transcripts (~/.claude/projects/*)
 // through the normal worker pipeline, so prior repo history becomes vault notes.
 // Usage: node scripts/backfill.mjs [--per-repo N]   then: node scripts/worker.mjs
-import { readdirSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, renameSync, statSync, mkdirSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { VAULT } from './vault.mjs';
+import { VAULT, ROOT } from './vault.mjs';
 
 const PER_REPO = Number(process.argv.includes('--per-repo') ? process.argv[process.argv.indexOf('--per-repo') + 1] : 2);
 const PROJECTS = join(homedir(), '.claude', 'projects');
@@ -34,9 +34,13 @@ for (const dir of readdirSync(PROJECTS)) {
     if (!cwd) continue;
     if (resolve(cwd) === resolve(ROOT)) continue; // the vault repo itself: already captured live
     const id = `backfill-${basename(cwd)}-${basename(f, '.jsonl').slice(0, 8)}`;
-    writeFileSync(join(VAULT, 'queue', `${id}.json`), JSON.stringify({
+    // atomic: write a temp file then rename, so the worker never reads a half-written entry
+    const dest = join(VAULT, 'queue', `${id}.json`);
+    const tmp = dest + '.tmp';
+    writeFileSync(tmp, JSON.stringify({
       session_id: id, transcript_path: f, cwd, ts: new Date().toISOString(), backfill: true,
     }, null, 2));
+    renameSync(tmp, dest);
     console.log(`queued ${id}  (${(statSync(f).size / 1048576).toFixed(1)}MB, cwd: ${cwd})`);
     queued++;
   }

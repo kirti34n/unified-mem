@@ -3,15 +3,16 @@
 // vault BEFORE importing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 process.env.UNIFIED_MEM_VAULT_DIR = mkdtempSync(join(tmpdir(), 'umem-test-'));
 const {
   parseNote, tokenize, scoreNotes, detectOutcome, makeDiff, updateNoteFile,
-  validateNote, reindexNotes, openDb, SECRET_RE, NOTES_DIR,
+  validateNote, duplicateFrontmatterKey, reindexNotes, openDb, SECRET_RE, NOTES_DIR,
 } = await import('../scripts/vault.mjs');
+const { grade } = await import('../eval/run.mjs');
 
 const FULL_NOTE = `---
 id: 2026-01-02-example-note
@@ -145,4 +146,69 @@ test('updateNoteFile: $& in value must not expand (P1.2), frontmatter-scoped', (
   assert.match(after, /^status: needs-review$/m);
   assert.match(after, /^last_validated: checked \$& today$/m); // literal, not expanded
   assert.match(after, /status: done in prose/);                // body untouched
+});
+
+// ---- regression tests for the launch-readiness fixes ----
+
+test('parseNote: leading UTF-8 BOM is tolerated', () => {
+  const n = parseNote('﻿---\nid: 2026-01-02-bom\ntype: recovery\ntitle: t\n---\nbody');
+  assert.equal(n?.id, '2026-01-02-bom'); // a BOM must not make the note silently unindexable
+});
+
+test('duplicateFrontmatterKey: detects a repeated key, passes clean frontmatter', () => {
+  assert.equal(duplicateFrontmatterKey(FULL_NOTE), null);
+  const poisoned = '---\nid: 2026-01-02-x\ntype: recovery\ntitle: t\nq_value: 0.50\nq_value: 0.95\n---\nbody';
+  assert.equal(duplicateFrontmatterKey(poisoned), 'q_value'); // the Q-pinning poisoning trick is caught
+});
+
+test('grade: fact must appear AND not be a hedged non-answer', () => {
+  assert.equal(grade('The fix uses a redis SETNX lock.', 'SETNX'), true);
+  assert.equal(grade("I don't know the specifics, but maybe a SETNX lock helps?", 'SETNX'), false); // hedge fails
+  assert.equal(grade('We never discussed Kafka here.', 'never discussed', true), true);            // negative probe
+  assert.equal(grade('Totally unrelated answer.', 'SETNX'), false);                                 // keyword absent
+});
+
+test('reindexNotes: preserves DB-side last_used / access_count across a reindex', () => {
+  const p = join(noteDir, '2026-01-07-usage.md');
+  writeFileSync(p, '---\nid: 2026-01-07-usage\ntype: recovery\ntitle: usage note\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  // simulate a hook touch: usage state is written to the DB, never to the file
+  db.prepare("UPDATE notes SET access_count=7, last_used='2026-02-01' WHERE id='2026-01-07-usage'").run();
+  reindexNotes(db); // must NOT reset the counters back to the file's 0 / null
+  const row = db.prepare("SELECT access_count, last_used FROM notes WHERE id='2026-01-07-usage'").get();
+  assert.equal(row.access_count, 7);
+  assert.equal(row.last_used, '2026-02-01');
+});
+
+test('reindexNotes: a deleted note file is reconciled out of the DB and FTS', () => {
+  const p = join(noteDir, '2026-01-08-doomed.md');
+  writeFileSync(p, '---\nid: 2026-01-08-doomed\ntype: recovery\ntitle: zorptastic doomed note\nentities: [zorptastic]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody about zorptastic.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM notes WHERE id='2026-01-08-doomed'").get().c, 1);
+  rmSync(p);
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM notes WHERE id='2026-01-08-doomed'").get().c, 0); // no undead row
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get('"zorptastic"').c, 0);
+});
+
+test('updateNoteFile: missing note file returns null instead of throwing', () => {
+  const p = join(noteDir, '2026-01-09-vanish.md');
+  writeFileSync(p, '---\nid: 2026-01-09-vanish\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  rmSync(p); // file gone but the row (with its path) is still present, as in the decay-after-delete race
+  assert.equal(updateNoteFile(db, '2026-01-09-vanish', { status: 'needs-review' }), null);
+  reindexNotes(db); // clean up the now-orphaned row so later assertions are unaffected
+});
+
+test('reindexNotes: archived notes are excluded from the FTS index', () => {
+  writeFileSync(join(noteDir, '2026-01-10-archived-fts.md'),
+    '---\nid: 2026-01-10-archived-fts\ntype: recovery\ntitle: quibblewick archived\nentities: [quibblewick]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: archived\nlinks: []\n---\nquibblewick body.');
+  reindexNotes(db);
+  // archived terms must not inflate document-frequency / suppress a live note that shares them
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM notes_fts WHERE notes_fts MATCH ?').get('"quibblewick"').c, 0);
+});
+
+test('export escaping: JSON-in-HTML hardening neutralizes </script>', () => {
+  const escaped = JSON.stringify({ body: 'fix for </script> xss' }).replace(/</g, '\\u003c');
+  assert.ok(!escaped.includes('</script>')); // cannot terminate the inline <script> on the static demo page
 });

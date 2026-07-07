@@ -95,7 +95,7 @@ See [EVAL.md](EVAL.md) for the full methodology, the honest caveats, and how to 
 node scripts/improve.mjs --iterations 5    # or --forever; create a STOP file to halt
 ```
 
-Research, hypothesis, implement, test, accept or revert, repeat: hill-climbs the retrieval tunables against the A-arm eval score, one knob at a time. Three guards keep it honest: it defaults to your real question set (the demo set needs an explicit flag), it refuses to run below 14 samples per measurement, and a noise guard accepts a change only if correctness strictly improves or ties with at least 15% fewer output tokens. Weights are normalized at load, so no accepted change can break the weighting invariant. Runs as a plain Node process spawning fresh headless calls (no CLI session limits); every iteration logs to `improve/log.jsonl`.
+Research, hypothesis, implement, test, accept or revert, repeat: hill-climbs the retrieval tunables against the A-arm eval score, one knob at a time. Three guards keep it honest: it defaults to your real question set (the demo set falls back only with a loud warning, or an explicit flag), it refuses to run below 14 samples per measurement, and a noise guard accepts a change only if correctness strictly improves or ties with at least 15% fewer output characters. (At the 14-sample floor a single flipped answer clears the correctness bar, so treat accepted tweaks as suggestions to re-measure, not proofs; grow the question set past the recommended 15 for a firmer signal.) Weights are normalized per scoring call, so no accepted change can break the weighting invariant. Runs as a plain Node process spawning fresh headless calls (no CLI session limits); every iteration logs to `improve/log.jsonl`.
 
 ## 7. Backfill: start with your history
 

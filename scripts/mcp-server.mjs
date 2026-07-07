@@ -49,10 +49,11 @@ createInterface({ input: process.stdin }).on('line', line => {
   try { msg = JSON.parse(line); } catch { return; }
   const { id, method, params } = msg;
   if (method === 'initialize') return reply(id, {
-    protocolVersion: params?.protocolVersion || '2024-11-05',
+    protocolVersion: '2024-11-05', // pin to the version we implement, do not echo the client's
     capabilities: { tools: {} },
     serverInfo: { name: 'unified-mem', version: '1.0.0' },
   });
+  if (method === 'ping') return reply(id, {}); // spec: answer promptly with an empty result or be dropped as stale
   if (method === 'tools/list') return reply(id, { tools: [SEARCH_TOOL, REMEMBER_TOOL] });
   if (method === 'tools/call') {
     const args = params?.arguments || {};
@@ -66,8 +67,9 @@ createInterface({ input: process.stdin }).on('line', line => {
         });
         return reply(id, { content: [{ type: 'text', text: args.kind === "note" ? `saved as ${noteId}; it will surface when a prompt matches it` : `saved as ${noteId}; it is pinned into every future session` }] });
       }
-      return fail(id, -32602, `unknown tool: ${params?.name}`);
-    } catch (e) { return fail(id, -32603, e.message); }
+      // tool-level failure is reported IN the result (isError), not as a JSON-RPC error (spec)
+      return reply(id, { content: [{ type: 'text', text: `unknown tool: ${params?.name}` }], isError: true });
+    } catch (e) { return reply(id, { content: [{ type: 'text', text: e.message }], isError: true }); }
   }
   if (id !== undefined) return fail(id, -32601, `method not found: ${method}`); // notifications: silently ignored
 });

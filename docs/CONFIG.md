@@ -13,9 +13,10 @@ Copy `config.example.json` to `config.json` next to the tool; defaults apply for
 | `recency_half_life_days` | `30` | recency decay in ranking |
 | `decay_factor_per_week` / `decay_after_unused_days` | `0.95` / `7` | Q decay on idle notes |
 | `archive_below_q` / `archive_unused_days` | `0.20` / `60` | forgetting policy |
+| `active_cap_per_repo` | `300` | consolidation prints an `OVER CAP` warning above this many active notes in a repo (a warning, not a hard prune) |
 | `q_alpha` / `q_delta_cap` / `q_clamp` | `0.3` / `0.15` / `[.05,.95]` | Q-update guardrails |
 | `contribution_judge` | `llm` | `llm` for the pinned judge, `heuristic` for zero LLM calls |
-| `daily_budget_usd` | `5` | hard daily cap on pipeline LLM spend (reflect, judge, verify, arbiter) |
+| `daily_budget_usd` | `5` | hard daily cap on pipeline LLM spend (reflect, judge, verify, arbiter, and the eval harness) |
 | `max_reflections_per_run` | `10` | reflections per worker drain; excess stays queued for the next run |
 | `reflector_model` | sonnet | model that writes notes (quality matters here) |
 | `eval_model` / `verify_model` | haiku | cheap pinned models for eval, verification, judging |

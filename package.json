@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": "github:kirti34n/unified-mem",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.13"
   },
   "scripts": {
     "init": "node scripts/init.mjs",

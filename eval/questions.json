@@ -12,10 +12,11 @@
   {
     "id": "playwright-flake",
     "q": "Why did our Playwright e2e jobs flake in CI with ECONNREFUSED, and what fixed it? If you don't know, say so plainly.",
-    "expect": "(?=[\\s\\S]*port)[\\s\\S]*shard"
+    "expect": "(?=[\\s\\S]*\\bports?\\b)[\\s\\S]*shard"
   },
   {
     "id": "negative-probe-grafana",
+    "negative": true,
     "q": "What did we decide about the Grafana alerting migration? If you don't know or we never discussed it, say so plainly.",
     "expect": "(don'?t (know|have)|no (information|record|memory|notes?)|never discussed|not aware|no mention|couldn'?t find|cannot find)"
   },
