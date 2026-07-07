@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>unified-mem — live memory dashboard</title>
+<title>unified-mem · live memory dashboard</title>
 <link rel="stylesheet" href="/vendor/prism-tomorrow.min.css">
 <link rel="stylesheet" href="/vendor/prism-diff-highlight.min.css">
 <style>
@@ -156,7 +156,7 @@ function rSessions(m){
       <div class="sess-sum">${esc(s.summary||'')}</div>`+
       inj.map(i=>{const n=notesById[i.note_id];const d=dq[s.id+'|'+i.note_id];
         const cls=d>0?'up':d<0?'down':'none';
-        const dtxt=d==null?'—':(d>0?'▲ +':'▼ −')+Math.abs(d).toFixed(2);
+        const dtxt=d==null?'·':(d>0?'▲ +':'▼ −')+Math.abs(d).toFixed(2);
         return `<div class="inj"><span class="rank">${i.rank}</span>
           <span class="swatch" style="background:${typeColor(n?.type)}"></span>
           <span>${esc(n?.title||i.note_id)}</span>
@@ -263,7 +263,7 @@ function lineChart(el,{series,yMax=1,yTicks,h=300,fmtY=v=>v,fmtX}){
 function rQ(m){
   m.innerHTML=`<h2>Q evolution</h2><div class="sub">Learned usefulness per note over time. Rising = the note keeps helping sessions succeed (R2/R3); sagging = weekly decay of unused notes (R7). Flat-lining into the floor ends in archive.</div>
   <div class="card"><div id="qc"></div><div class="legend" id="ql"></div>
-  <details><summary>Data table — every Q update</summary><table id="qt"></table></details></div>`;
+  <details><summary>Data table · every Q update</summary><table id="qt"></table></details></div>`;
   const ids=[...new Set(S.notes.map(n=>n.id))].sort();
   const series=ids.map((id,i)=>{
     const ev=S.q_history.filter(q=>q.note_id===id).sort((a,b)=>a.ts.localeCompare(b.ts));
@@ -276,7 +276,7 @@ function rQ(m){
   $('#ql').innerHTML=series.map(s=>`<span class="key"><span class="ln" style="background:${s.color}"></span>${esc(s.name)}${st[s.id]!=='active'?` (${st[s.id]})`:''}</span>`).join('');
   $('#qt').innerHTML='<tr><th>when</th><th>note</th><th>op</th><th>Q</th><th>reward</th></tr>'+
     S.q_history.slice().sort((a,b)=>b.ts.localeCompare(a.ts)).map(q=>
-    `<tr><td>${fmtTs(q.ts)}</td><td>${shortName(q.note_id)}</td><td>${q.op}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'—'}</td></tr>`).join('');
+    `<tr><td>${fmtTs(q.ts)}</td><td>${shortName(q.note_id)}</td><td>${q.op}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'·'}</td></tr>`).join('');
 }
 
 /* ---------- Consolidation ---------- */
@@ -305,7 +305,7 @@ function rMetrics(m){
   const stalePct=S.summary.stale_rate*100;
   const staleOk=stalePct<5;
   const dAct=last.active-wk.active;
-  m.innerHTML=`<h2>Metrics</h2><div class="sub">The accuracy targets from PLAN §6 — vault size must plateau (R7), stale retrievals stay under 5% (R9).</div>
+  m.innerHTML=`<h2>Metrics</h2><div class="sub">The accuracy targets from PLAN §6 · vault size must plateau (R7), stale retrievals stay under 5% (R9).</div>
   <div class="tiles">
     <div class="card tile"><div class="lbl">Active notes</div><div class="val">${S.summary.active}</div>
       <div class="delta" style="color:${dAct>=0?'var(--good)':'var(--crit)'}">${dAct>=0?'+':''}${dAct} vs last week</div>${spark(M.map(d=>d.active))}</div>
@@ -316,9 +316,9 @@ function rMetrics(m){
     <div class="card tile"><div class="lbl">Mean Q (non-archived)</div><div class="val">${S.summary.mean_q.toFixed(2)}</div>
       <div class="note">${S.summary.retrievals} total retrievals logged</div></div>
   </div>
-  <div class="card"><h2>Vault size trend</h2><div class="sub">Healthy shape: growth then plateau — linear growth means forgetting is broken.</div>
+  <div class="card"><h2>Vault size trend</h2><div class="sub">Healthy shape: growth then plateau · linear growth means forgetting is broken.</div>
   <div id="mt"></div><div class="legend" id="ml"></div>
-  <details><summary>Data table — daily metrics</summary><table id="mtab"></table></details></div>`;
+  <details><summary>Data table · daily metrics</summary><table id="mtab"></table></details></div>`;
   const mk=(name,color,key)=>({name,color,pts:M.map(d=>({x:new Date(d.date).getTime(),y:d[key]}))});
   const series=[mk('active','#3987e5','active'),mk('needs-review','#199e70','needs_review'),mk('archived','#c98500','archived')];
   const ymax=Math.max(4,...M.map(d=>d.active))+1;

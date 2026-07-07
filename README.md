@@ -2,16 +2,16 @@
 
 # 🧠 unified-mem
 
-**The unified memory layer for Claude Code — on top of its per-project memory, across all your repositories.**
+**The unified memory layer for Claude Code, on top of its per-project memory, across all your repositories.**
 
-Claude Code already remembers *within* a project. This unifies what it learns *across* projects — scored by real outcomes, invalidated when code changes, observable on a live dashboard.
+Claude Code already remembers *within* a project. This unifies what it learns *across* projects, scored by real outcomes, invalidated when code changes, observable on a live dashboard.
 
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)](#-quickstart-5-minutes)
 [![Node 22.5+](https://img.shields.io/badge/node-%E2%89%A522.5-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-d97757)](https://code.claude.com)
 
-<img src="docs/screenshots/sessions.png" width="85%" alt="Live dashboard — sessions view">
+<img src="docs/screenshots/sessions.png" width="85%" alt="Live dashboard, sessions view">
 
 *The live dashboard: every session, what the vault injected, and the usefulness score each note earned from the outcome.*
 
@@ -21,40 +21,40 @@ Claude Code already remembers *within* a project. This unifies what it learns *a
 
 ## 🧭 What is this, in plain words?
 
-Claude Code is **not** amnesiac — it has [built-in memory](https://code.claude.com/docs/en/memory): each project gets an auto-memory directory that loads every session, `CLAUDE.md` files carry your instructions, and `--resume` continues past conversations. That layer works, and unified-mem does not replace it.
+Claude Code is **not** amnesiac, it has [built-in memory](https://code.claude.com/docs/en/memory): each project gets an auto-memory directory that loads every session, `CLAUDE.md` files carry your instructions, and `--resume` continues past conversations. That layer works, and unified-mem does not replace it.
 
-But every project's memory is an **island**. Auto-memory is keyed to one repository — the afternoon you spent fixing a nasty race condition in `repo-A` is invisible to tomorrow's session in `repo-B`. And nothing in the built-in layer *measures* whether a remembered fact still helps, or notices that the code it describes was rewritten last week.
+But every project's memory is an **island**. Auto-memory is keyed to one repository, the afternoon you spent fixing a nasty race condition in `repo-A` is invisible to tomorrow's session in `repo-B`. And nothing in the built-in layer *measures* whether a remembered fact still helps, or notices that the code it describes was rewritten last week.
 
-**unified-mem is the shared, self-correcting notebook that sits above all the per-project memories** — one vault that every session, in every repo, writes to and reads from:
+**unified-mem is the shared, self-correcting notebook that sits above all the per-project memories**, one vault that every session, in every repo, writes to and reads from:
 
-- When a session **ends**, a background worker reads the transcript and writes down anything durable it learned — *"this bug had this fix"*, *"this project follows this convention"*, *"this approach worked"* — as small markdown files called **notes**.
+- When a session **ends**, a background worker reads the transcript and writes down anything durable it learned, *"this bug had this fix"*, *"this project follows this convention"*, *"this approach worked"*, as small markdown files called **notes**.
 - When a new session **starts** (in *any* of your repositories), the most relevant notes are automatically shown to Claude before it begins. It starts the day already knowing what you learned last week, in every repo.
-- Over time the system **grades its own notes**. Notes that keep showing up in successful sessions gain a usefulness score (Q-value); notes nobody benefits from fade away and are archived. When the code a note describes gets changed, the note is flagged *"needs review"* and re-verified against the code — so old advice can't silently mislead you. **Stale memory is worse than no memory**, so forgetting is a feature, not a bug.
+- Over time the system **grades its own notes**. Notes that keep showing up in successful sessions gain a usefulness score (Q-value); notes nobody benefits from fade away and are archived. When the code a note describes gets changed, the note is flagged *"needs review"* and re-verified against the code, so old advice can't silently mislead you. **Stale memory is worse than no memory**, so forgetting is a feature, not a bug.
 
-Everything is observable on a **live dashboard** — you can literally watch what got injected, which notes are earning their keep, and every change the maintenance job makes (shown as red/green diffs).
+Everything is observable on a **live dashboard**, you can literally watch what got injected, which notes are earning their keep, and every change the maintenance job makes (shown as red/green diffs).
 
 No databases to install, no npm packages, no cloud. Plain markdown files + Node's built-in SQLite. The vault is a git repo you own.
 
 ## 🤔 The problem, precisely
 
-1. **Cross-repo blindness** — built-in memory is per-repository by design. A fix discovered in `repo-A` gets re-discovered from scratch in `repo-B`, `repo-C`, …
-2. **No learning loop** — nothing built-in measures whether a remembered fact actually *helps* the work; useful and useless memories are treated identically, forever.
-3. **No staleness handling** — nothing notices when the code a memory describes has changed. Stale memory silently misleads — it's worse than no memory.
+1. **Cross-repo blindness**, built-in memory is per-repository by design. A fix discovered in `repo-A` gets re-discovered from scratch in `repo-B`, `repo-C`, …
+2. **No learning loop**, nothing built-in measures whether a remembered fact actually *helps* the work; useful and useless memories are treated identically, forever.
+3. **No staleness handling**, nothing notices when the code a memory describes has changed. Stale memory silently misleads, it's worse than no memory.
 
 ## 🧩 How it layers on Claude Code's built-in memory
 
 | Layer | Scope | Holds | Learns? | Staleness? |
 |---|---|---|---|---|
-| [Session transcripts](https://code.claude.com/docs/en/sessions) (`--resume`) | one conversation | full history | — | — |
-| [`CLAUDE.md` hierarchy](https://code.claude.com/docs/en/memory) | user / project | your *instructions* | — | manual |
+| [Session transcripts](https://code.claude.com/docs/en/sessions) (`--resume`) | one conversation | full history | no | no |
+| [`CLAUDE.md` hierarchy](https://code.claude.com/docs/en/memory) | user / project | your *instructions* | no | manual |
 | [Auto-memory](https://code.claude.com/docs/en/memory) | **one repository** | project facts Claude saves | heuristic ("worth remembering") | none |
 | **unified-mem** (this) | **all repositories** | durable, verified knowledge | **Q-value from real outcomes** | **git-diff invalidation + re-verification** |
 
-**Division of labor:** project-local, ephemeral context (current task state, repo structure, short-lived plans) stays in the built-in per-project layer where it belongs. Durable, *transferable* knowledge — verified fixes, technology gotchas, patterns, conventions — is promoted into the unified vault. The reflector prompt enforces this split, so the layers complement instead of duplicating: session memory keeps a session coherent; the unified layer makes code generation accurate **everywhere**.
+**Division of labor:** project-local, ephemeral context (current task state, repo structure, short-lived plans) stays in the built-in per-project layer where it belongs. Durable, *transferable* knowledge, verified fixes, technology gotchas, patterns, conventions, is promoted into the unified vault. The reflector prompt enforces this split, so the layers complement instead of duplicating: session memory keeps a session coherent; the unified layer makes code generation accurate **everywhere**.
 
 ```mermaid
 flowchart LR
-    subgraph session [Claude Code session — any repo]
+    subgraph session [Claude Code session, any repo]
         A[SessionStart hook<br/>retrieve.mjs] -->|top-5 notes injected| B((session runs))
         B --> C[SessionEnd hook<br/>enqueue.mjs]
     end
@@ -70,9 +70,9 @@ flowchart LR
 
 ## ⚡ Quickstart (5 minutes)
 
-**Prerequisites:** [Node.js](https://nodejs.org) ≥ 22.5 (`node --version` to check — the built-in SQLite arrived in 22.5) and the [Claude Code CLI](https://code.claude.com). That's it — **zero npm installs**.
+**Prerequisites:** [Node.js](https://nodejs.org) ≥ 22.5 (`node --version` to check, the built-in SQLite arrived in 22.5) and the [Claude Code CLI](https://code.claude.com). That's it, **zero npm installs**.
 
-**Step 1 — See it working before committing to anything.** The demo seeds three weeks of fictional history so every dashboard view has data:
+**Step 1, See it working before committing to anything.** The demo seeds three weeks of fictional history so every dashboard view has data:
 
 ```bash
 git clone https://github.com/kirti34n/unified-mem && cd unified-mem
@@ -80,7 +80,7 @@ node scripts/seed.mjs        # builds the demo vault
 node scripts/dashboard.mjs   # → open http://localhost:7777 and click through the 5 views
 ```
 
-**Step 2 — Attach it to your sessions.** Add two hooks to `~/.claude/settings.json` (create the file if it doesn't exist; if you already have a `"hooks"` section, merge these keys into it). Replace `/path/to/unified-mem` with where you cloned it:
+**Step 2, Attach it to your sessions.** Add two hooks to `~/.claude/settings.json` (create the file if it doesn't exist; if you already have a `"hooks"` section, merge these keys into it). Replace `/path/to/unified-mem` with where you cloned it:
 
 ```jsonc
 {
@@ -93,16 +93,16 @@ node scripts/dashboard.mjs   # → open http://localhost:7777 and click through 
 }
 ```
 
-Because this lives in your **user-level** settings, it applies to *every* repository automatically — including ones you create next month.
+Because this lives in your **user-level** settings, it applies to *every* repository automatically, including ones you create next month.
 
-**Step 3 — Turn on the learning loop.**
+**Step 3, Turn on the learning loop.**
 
 ```bash
 node scripts/worker.mjs --watch     # keep running: reflects finished sessions into notes
 node scripts/consolidate.mjs       # run nightly (cron / Task Scheduler): the "dream job"
 ```
 
-**Step 4 (optional but recommended) — Import your history.** Mine the session transcripts you *already have* into notes, so the vault starts useful instead of empty:
+**Step 4 (optional but recommended), Import your history.** Mine the session transcripts you *already have* into notes, so the vault starts useful instead of empty:
 
 ```bash
 node scripts/backfill.mjs --per-repo 2   # queue your 2 biggest recent transcripts per repo
@@ -110,7 +110,7 @@ node scripts/worker.mjs                  # reflect them into notes
 node scripts/seed.mjs --purge-demo       # drop the demo rows, keep only real data
 ```
 
-**Step 5 — Tell the maintenance job where your repos live** (this powers staleness detection). Copy `config.example.json` to `config.json` and fill in the `repos` map:
+**Step 5, Tell the maintenance job where your repos live** (this powers staleness detection). Copy `config.example.json` to `config.json` and fill in the `repos` map:
 
 ```jsonc
 "repos": { "my-api": "/home/me/code/my-api", "my-app": "/home/me/code/my-app" }
@@ -120,7 +120,7 @@ That's the whole install. From now on, sessions begin with *"Team knowledge note
 
 ## 📓 What a note looks like
 
-One claim per note, ≤150 words, plain markdown with YAML frontmatter — the whole vault opens in [Obsidian](https://obsidian.md) if you like graphs:
+One claim per note, ≤150 words, plain markdown with YAML frontmatter, the whole vault opens in [Obsidian](https://obsidian.md) if you like graphs:
 
 ```yaml
 ---
@@ -132,7 +132,7 @@ repos: [api-core, auth-service]
 files: [src/auth/token.ts, src/middleware/refresh.ts]
 source_commit: 8f3ab21
 confidence: high
-q_value: 0.50         # learned usefulness — starts neutral, earned over time
+q_value: 0.50         # learned usefulness, starts neutral, earned over time
 status: active        # active | needs-review | archived
 links: ["[[2026-06-16-redis-lock-pattern]]"]
 ---
@@ -142,41 +142,41 @@ links: ["[[2026-06-16-redis-lock-pattern]]"]
 **Gotchas:** Lock TTL must exceed p99 refresh latency.
 ```
 
-The `files:` + `source_commit` provenance is not decoration — it's what lets the system later detect that the code a note describes has changed.
+The `files:` + `source_commit` provenance is not decoration, it's what lets the system later detect that the code a note describes has changed.
 
 ## 🖥️ The dashboard
 
 Five views, each making one mechanism visible:
 
 <details>
-<summary><b>📋 Sessions</b> — what was injected into each session, and the Q-delta each note earned from the outcome</summary>
+<summary><b>📋 Sessions</b>, what was injected into each session, and the Q-delta each note earned from the outcome</summary>
 <br><img src="docs/screenshots/sessions.png" alt="Sessions view">
 </details>
 
 <details>
-<summary><b>🕸️ Notes graph</b> — atomic notes linked through shared entities, sized by learned Q-value</summary>
+<summary><b>🕸️ Notes graph</b>, atomic notes linked through shared entities, sized by learned Q-value</summary>
 <br><img src="docs/screenshots/graph.png" alt="Notes graph view">
 </details>
 
 <details>
-<summary><b>📈 Q evolution</b> — usefulness being learned: rising lines help, sagging lines decay toward archive</summary>
+<summary><b>📈 Q evolution</b>, usefulness being learned: rising lines help, sagging lines decay toward archive</summary>
 <br><img src="docs/screenshots/q-evolution.png" alt="Q evolution view">
 </details>
 
 <details>
-<summary><b>🌙 Consolidation log</b> — every merge/edit/invalidation/verification as an exact red/green diff</summary>
+<summary><b>🌙 Consolidation log</b>, every merge/edit/invalidation/verification as an exact red/green diff</summary>
 <br><img src="docs/screenshots/consolidation.png" alt="Consolidation view">
 </details>
 
 <details>
-<summary><b>🎯 Metrics</b> — stale-retrieval rate (&lt;5% target), vault size trend (healthy = plateau, broken = linear growth)</summary>
+<summary><b>🎯 Metrics</b>, stale-retrieval rate (&lt;5% target), vault size trend (healthy = plateau, broken = linear growth)</summary>
 <br><img src="docs/screenshots/metrics.png" alt="Metrics view">
 </details>
 
 ## 🔬 How it works (the mechanisms)
 
 <details>
-<summary><b>1. Retrieval — which notes get injected?</b></summary>
+<summary><b>1. Retrieval, which notes get injected?</b></summary>
 
 At session start, a query is built from your repo name, branch, last 5 commit subjects, and recently changed paths. Every note is scored:
 
@@ -184,36 +184,36 @@ At session start, a query is built from your repo name, branch, last 5 commit su
 score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
 ```
 
-- **similarity** — SQLite FTS5/BM25 full-text match (no embeddings needed at this scale)
-- **q_value** — the learned usefulness score (see below)
-- **recency** — exponential half-life, default 30 days
-- **validity** — `active 1.0 · needs-review 0.4 · archived 0` (a needs-review note can still appear, but demoted and explicitly labeled *"verify against code"*)
+- **similarity**, SQLite FTS5/BM25 full-text match (no embeddings needed at this scale)
+- **q_value**, the learned usefulness score (see below)
+- **recency**, exponential half-life, default 30 days
+- **validity**, `active 1.0 · needs-review 0.4 · archived 0` (a needs-review note can still appear, but demoted and explicitly labeled *"verify against code"*)
 
-Top-5 notes, capped at ≈2,500 tokens, written as factual statements — never imperative commands (out-of-band imperative text can trip Claude's prompt-injection defenses). Retrieval is **pushed** by the hook rather than waiting for the model to think of searching — model-initiated recall is unreliable, and injected context is free of per-turn tool-definition overhead.
+Top-5 notes, capped at ≈2,500 tokens, written as factual statements, never imperative commands (out-of-band imperative text can trip Claude's prompt-injection defenses). Retrieval is **pushed** by the hook rather than waiting for the model to think of searching, model-initiated recall is unreliable, and injected context is free of per-turn tool-definition overhead.
 </details>
 
 <details>
-<summary><b>2. Reflection — where notes come from</b></summary>
+<summary><b>2. Reflection, where notes come from</b></summary>
 
-The SessionEnd hook only *enqueues* (hooks must return in milliseconds). A background worker then reads the transcript and asks a headless Claude to distill it: only durable, reusable knowledge; typed (`recovery`/`strategy`/`optimization`/`decision`/`convention`); one claim per note; commit + files provenance mandatory; secrets forbidden by prompt **and** regex-scanned again before the file is written; near-duplicates suppressed by showing the reflector the 10 nearest existing notes. "Zero notes" is a valid and common outcome — routine sessions produce nothing, and that's correct.
+The SessionEnd hook only *enqueues* (hooks must return in milliseconds). A background worker then reads the transcript and asks a headless Claude to distill it: only durable, reusable knowledge; typed (`recovery`/`strategy`/`optimization`/`decision`/`convention`); one claim per note; commit + files provenance mandatory; secrets forbidden by prompt **and** regex-scanned again before the file is written; near-duplicates suppressed by showing the reflector the 10 nearest existing notes. "Zero notes" is a valid and common outcome, routine sessions produce nothing, and that's correct.
 </details>
 
 <details>
-<summary><b>3. Q-learning — how usefulness is earned</b></summary>
+<summary><b>3. Q-learning, how usefulness is earned</b></summary>
 
-The worker detects a **verifiable outcome** for each session — tests passed / build green → `r=1`; failed → `r=0`; anything unclear → *no update at all* (never guess rewards). Every note that was injected into that session gets:
+The worker detects a **verifiable outcome** for each session, tests passed / build green → `r=1`; failed → `r=0`; anything unclear → *no update at all* (never guess rewards). Every note that was injected into that session gets:
 
 ```
 Q ← clamp(Q + α·c·(r − Q), 0.05, 0.95)      α=0.3, |ΔQ| ≤ 0.15 per session
 ```
 
-where `c` ∈ [0,1] measures whether the note's content surfaced in the **assistant's own output** — matching the whole transcript would reward notes merely for being injected, a self-reinforcing loop. Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector — a bare ✓ is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever — that trend line is on the Metrics view, and if it's linear, forgetting is broken.
+where `c` ∈ [0,1] measures whether the note's content surfaced in the **assistant's own output**, matching the whole transcript would reward notes merely for being injected, a self-reinforcing loop. Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector, a bare ✓ is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever, that trend line is on the Metrics view, and if it's linear, forgetting is broken.
 </details>
 
 <details>
-<summary><b>4. Staleness — the biggest accuracy lever</b></summary>
+<summary><b>4. Staleness, the biggest accuracy lever</b></summary>
 
-Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to **needs-review**. Then a verification pass reads the *current* code and decides: claims still hold → restored to active with fresh provenance; code moved on → archived, with the reason logged. Every step appears in the Consolidation view as a diff. This converts the worst failure mode of any memory system — confidently applying outdated fixes — into a visible, self-healing review queue.
+Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to **needs-review**. Then a verification pass reads the *current* code and decides: claims still hold → restored to active with fresh provenance; code moved on → archived, with the reason logged. Every step appears in the Consolidation view as a diff. This converts the worst failure mode of any memory system, confidently applying outdated fixes, into a visible, self-healing review queue.
 </details>
 
 <details>
@@ -225,17 +225,17 @@ Injection covers session start; for mid-session lookups there's a zero-dependenc
 claude mcp add --scope user vault-search -- node /path/to/unified-mem/scripts/mcp-server.mjs
 ```
 
-Opt-in by design — MCP tool definitions cost tokens in every session, so only register it if you find yourself wanting mid-session recall.
+Opt-in by design, MCP tool definitions cost tokens in every session, so only register it if you find yourself wanting mid-session recall.
 </details>
 
 <details>
-<summary><b>6. Measurement — prove it helps, don't assume</b></summary>
+<summary><b>6. Measurement, prove it helps, don't assume</b></summary>
 
 ```bash
 node eval/run.mjs --runs 4        # arm A: memory on · arm B: MEMORY_OFF=1 control
 ```
 
-Same questions through headless `claude -p`, graded by expect-regex, reported as correct-rate / tokens / latency medians per arm. In this project's smoke eval, arm A answered 3/3 questions whose answers existed *only* in vault notes; arm B scored 0/3. Honest caveat: those questions were written from the notes, so they demonstrate the plumbing works end-to-end (injection → context → answer), not a field result. Write questions from *your* real incidents into `eval/questions.json` — that also makes the improve loop meaningful.
+Same questions through headless `claude -p`, graded by expect-regex, reported as correct-rate / tokens / latency medians per arm. In this project's smoke eval, arm A answered 3/3 questions whose answers existed *only* in vault notes; arm B scored 0/3. Honest caveat: those questions were written from the notes, so they demonstrate the plumbing works end-to-end (injection → context → answer), not a field result. Write questions from *your* real incidents into `eval/questions.json`, that also makes the improve loop meaningful.
 </details>
 
 <details>
@@ -245,7 +245,7 @@ Same questions through headless `claude -p`, graded by expect-regex, reported as
 node scripts/improve.mjs --iterations 5    # or --forever; create a STOP file to halt
 ```
 
-`RESEARCH → HYPOTHESIS → IMPLEMENT → TEST → ACCEPT/REVERT → repeat.` Hill-climbs the retrieval tunables (weights, k, half-life, token budget) against the A-arm eval score, one knob at a time. A noise guard rejects same-noise deltas: a change is accepted only if correctness strictly improves, or ties with ≥15% fewer output tokens — run-to-run jitter cannot alter your config. (Ranking weights are also normalized at load, so no config change can break the weighting invariant.) Runs as a plain Node process spawning fresh headless `claude -p` calls — no CLI session limits apply. Every iteration logs to `improve/log.jsonl`. **Use enough eval questions/runs that deltas beat noise** — with 3 questions × 1 run, accept/revert decisions are jitter; ~15 questions × 4 runs is where it gets meaningful.
+`RESEARCH → HYPOTHESIS → IMPLEMENT → TEST → ACCEPT/REVERT → repeat.` Hill-climbs the retrieval tunables (weights, k, half-life, token budget) against the A-arm eval score, one knob at a time. A noise guard rejects same-noise deltas: a change is accepted only if correctness strictly improves, or ties with ≥15% fewer output tokens, run-to-run jitter cannot alter your config. (Ranking weights are also normalized at load, so no config change can break the weighting invariant.) Runs as a plain Node process spawning fresh headless `claude -p` calls, no CLI session limits apply. Every iteration logs to `improve/log.jsonl`. **Use enough eval questions/runs that deltas beat noise**, with 3 questions × 1 run, accept/revert decisions are jitter; ~15 questions × 4 runs is where it gets meaningful.
 </details>
 
 ## ⚙️ Config reference
@@ -271,14 +271,14 @@ Copy `config.example.json` → `config.json` (defaults apply for anything omitte
 <details>
 <summary><b>Does this replace CLAUDE.md or auto-memory?</b></summary>
 
-No — it sits on top of them. Keep writing instructions in `CLAUDE.md`; keep auto-memory on (it's per-project working memory and the default since it ships enabled). unified-mem only takes what *transcends* a single project — the reflector is explicitly told to skip project-local ephemera that the built-in layer already owns, and to capture only durable, transferable knowledge. If you disabled auto-memory, unified-mem still works; they're independent.
+No, it sits on top of them. Keep writing instructions in `CLAUDE.md`; keep auto-memory on (it's per-project working memory and the default since it ships enabled). unified-mem only takes what *transcends* a single project, the reflector is explicitly told to skip project-local ephemera that the built-in layer already owns, and to capture only durable, transferable knowledge. If you disabled auto-memory, unified-mem still works; they're independent.
 </details>
 
 <details>
 <summary><b>Notes aren't being injected</b></summary>
 
-- Hooks only apply to sessions started *after* editing settings — open a fresh session.
-- Test the retriever directly: `echo '{"session_id":"t","cwd":"/path/to/some/repo"}' | node scripts/retrieve.mjs` — you should see notes on stdout.
+- Hooks only apply to sessions started *after* editing settings, open a fresh session.
+- Test the retriever directly: `echo '{"session_id":"t","cwd":"/path/to/some/repo"}' | node scripts/retrieve.mjs`, you should see notes on stdout.
 - `MEMORY_OFF=1` in your environment silences it by design (that's the eval control arm).
 - The hook never blocks a session: on any internal error it exits 0 silently. Run the command above manually to surface the error.
 </details>
@@ -286,7 +286,7 @@ No — it sits on top of them. Keep writing instructions in `CLAUDE.md`; keep au
 <details>
 <summary><b>The worker writes no notes</b></summary>
 
-Usually correct behavior — routine sessions contain nothing durable, and the reflector is told "fewer is better; 0 is valid." It also drops any note matching secret patterns, and skips near-duplicates of existing notes. Check `queue/` is being drained and look at the worker's stdout.
+Usually correct behavior, routine sessions contain nothing durable, and the reflector is told "fewer is better; 0 is valid." It also drops any note matching secret patterns, and skips near-duplicates of existing notes. Check `queue/` is being drained and look at the worker's stdout.
 </details>
 
 <details>
@@ -298,13 +298,13 @@ Only through the same channel you already use: headless `claude -p` calls (refle
 <details>
 <summary><b>Won't the vault fill up with junk?</b></summary>
 
-That's what the forgetting machinery is for: reflector selectivity in, decay + archival out, per-repo active cap (default 300), dedupe-candidate flagging in between. Watch the vault-size trend on the Metrics view — plateau is healthy, linear growth means something's off.
+That's what the forgetting machinery is for: reflector selectivity in, decay + archival out, per-repo active cap (default 300), dedupe-candidate flagging in between. Watch the vault-size trend on the Metrics view, plateau is healthy, linear growth means something's off.
 </details>
 
 <details>
 <summary><b>Can a weird session poison the vault?</b></summary>
 
-Defenses in order: transcripts are wrapped as *data* in the reflector prompt; reflector output passes a **schema gate** (valid id format, title, body, and one of the five allowed types — anything malformed is dropped); notes are written in factual voice (never instructions); secrets are regex-blocked; new notes start at neutral Q and must *earn* influence through successful sessions; injections tell Claude to verify against current code; and everything is a git-tracked markdown file you can diff, revert, or delete. Treat the vault like code — review what lands in it, especially before sharing a vault with a team.
+Defenses in order: transcripts are wrapped as *data* in the reflector prompt; reflector output passes a **schema gate** (valid id format, title, body, and one of the five allowed types, anything malformed is dropped); notes are written in factual voice (never instructions); secrets are regex-blocked; new notes start at neutral Q and must *earn* influence through successful sessions; injections tell Claude to verify against current code; and everything is a git-tracked markdown file you can diff, revert, or delete. Treat the vault like code, review what lands in it, especially before sharing a vault with a team.
 </details>
 
 <details>
@@ -316,7 +316,7 @@ Built and tested on Windows 11 (Git Bash present). Hook commands use forward sla
 
 ## 📚 Research foundations
 
-The design rules are distilled from published work: **ACE** (evolving playbooks; context-collapse & brevity-bias failure modes — hence incremental note ops, never wholesale rewrites) · **MemRL / TAME** (similarity × utility retrieval; contribution-weighted Q updates) · **CODESKILL** (verifiable rewards beat LLM-judge-only) · **SCM / Letta** (sleep-time consolidation; ~30% redundancy by session 10 without it) · **SleepGate** (stale-retrieval rate as a first-class metric) · **A-MEM** (Zettelkasten-style atomic linked notes beat raw chunks). Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
+The design rules are distilled from published work: **ACE** (evolving playbooks; context-collapse & brevity-bias failure modes, hence incremental note ops, never wholesale rewrites) · **MemRL / TAME** (similarity × utility retrieval; contribution-weighted Q updates) · **CODESKILL** (verifiable rewards beat LLM-judge-only) · **SCM / Letta** (sleep-time consolidation; ~30% redundancy by session 10 without it) · **SleepGate** (stale-retrieval rate as a first-class metric) · **A-MEM** (Zettelkasten-style atomic linked notes beat raw chunks). Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
 
 ## 🗺️ Roadmap
 
