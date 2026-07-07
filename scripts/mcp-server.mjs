@@ -1,4 +1,4 @@
-// Minimal MCP stdio server exposing vault_search — the opt-in PULL path (R10).
+// Minimal MCP stdio server exposing vault_search, the opt-in PULL path (R10).
 // Register (opt-in; the push path via hooks remains primary):
 //   claude mcp add --scope user vault-search -- node /path/to/unified-mem/scripts/mcp-server.mjs
 import { createInterface } from 'node:readline';
@@ -23,7 +23,7 @@ function search({ query, repo = '', k = 5 }) {
   const notes = scoreNotes(db, tokenize(`${query} ${repo}`), k);
   if (!notes.length) return 'No matching notes in the vault.';
   return notes.map(n =>
-    `## ${n.title}${n.status === 'needs-review' ? ' [NEEDS REVIEW — verify against code]' : ''}\n` +
+    `## ${n.title}${n.status === 'needs-review' ? ' [NEEDS REVIEW, verify against code]' : ''}\n` +
     `(${n.id} · type: ${n.type} · repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit} · Q ${n.q_value.toFixed(2)})\n${n.body}`
   ).join('\n\n');
 }

@@ -24,13 +24,16 @@ try {
   ].join(' '));
 
   const db = openDb();
-  const top = scoreNotes(db, query);
+  // Relevance floor: injecting nothing beats injecting noise. Measured 2025 result:
+  // even irrelevant-but-plausible context degrades task performance, so a note must
+  // be topically relevant (sim>0) or have PROVEN high utility (q>=0.7) to be injected.
+  const top = scoreNotes(db, query).filter(n => n.sim > 0 || n.q_value >= 0.7);
   if (!top.length) process.exit(0);
 
-  let out = 'Cross-repo team knowledge from past sessions (a unified layer on top of this project\'s own memory — verify against current code before relying on it):\n';
+  let out = 'Cross-repo team knowledge from past sessions (a unified layer on top of this project\'s own memory, verify against current code before relying on it):\n';
   const used = [];
   for (const n of top) {
-    const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW — the underlying code changed; verify before use]' : '';
+    const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]' : '';
     const block = `\n## ${n.title}${flag}\n(type: ${n.type} · repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
     if (out.length + block.length > MAX_CHARS) break;
     out += block;

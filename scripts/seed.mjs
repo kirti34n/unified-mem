@@ -70,7 +70,7 @@ const CONSOLIDATIONS = [
 -**Pattern:** Use SETNX for locks.
 +**Pattern:** For short critical sections spanning app instances, use a
 +single-key Redis SETNX lock (\`lock:<domain>:<id>\`) with PX TTL and a
-+random token checked on release — not full Redlock, one Redis is
++random token checked on release, not full Redlock, one Redis is
 +enough at our scale.
 +**Where it worked:** token refresh, webhook dedupe, cron leader
 +election in worker-jobs.`],
@@ -91,7 +91,7 @@ const CONSOLIDATIONS = [
 -status: active
 +status: needs-review
 +**Needs review:** src/db/reports.ts changed after this was written
-+(commit b41c9de) — verify the filter builder still uses \`@>\`.`],
++(commit b41c9de), verify the filter builder still uses \`@>\`.`],
   ['2026-07-03T03:00:00', 'verify', ENV,
    'needs-review check passed: httpError() unchanged at HEAD, envelope shape intact → restored to active',
 `--- notes/2026/06/2026-06-24-api-error-envelope.md

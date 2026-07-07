@@ -55,13 +55,15 @@ No databases to install, no npm packages, no cloud. Plain markdown files + Node'
 ```mermaid
 flowchart LR
     subgraph session [Claude Code session, any repo]
-        A[SessionStart hook<br/>retrieve.mjs] -->|top-5 notes injected| B((session runs))
+        A[SessionStart hook<br/>retrieve.mjs] -->|relevant notes or nothing| B((session runs))
+        P[UserPromptSubmit hook<br/>retrieve-prompt.mjs] -->|just-in-time notes<br/>matched to each prompt| B
         B --> C[SessionEnd hook<br/>enqueue.mjs]
     end
-    C -->|queue/| D[worker.mjs<br/>outcome scorer + reflector]
+    C -->|queue/| D[worker.mjs<br/>outcome scorer + judge + reflector]
     D -->|new notes| V[(vault<br/>notes/*.md + SQLite FTS5)]
     V --> A
-    N[consolidate.mjs<br/>nightly dream job] -->|decay · archive · invalidate<br/>· verify against code| V
+    V --> P
+    N[consolidate.mjs<br/>nightly dream job] -->|decay · archive · invalidate ·<br/>verify · arbiter · entity hubs| V
     M[mcp-server.mjs<br/>vault_search] -.->|optional mid-session pull| B
     E[eval/run.mjs<br/>A/B harness] --> I[improve.mjs<br/>self-improvement loop]
     I -->|tunes| K[config.json]
@@ -87,11 +89,15 @@ node scripts/dashboard.mjs   # → open http://localhost:7777 and click through 
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command",
       "command": "node \"/path/to/unified-mem/scripts/retrieve.mjs\"", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command",
+      "command": "node \"/path/to/unified-mem/scripts/retrieve-prompt.mjs\"", "timeout": 5 }] }],
     "SessionEnd":   [{ "hooks": [{ "type": "command",
       "command": "node \"/path/to/unified-mem/scripts/enqueue.mjs\"", "timeout": 5 }] }]
   }
 }
 ```
+
+The three hooks: session start seeds broad context from your git state, **each prompt pulls just-in-time notes matched to what you actually asked** (deduplicated against everything already injected, and most prompts correctly pull nothing), and session end queues the transcript for reflection.
 
 Because this lives in your **user-level** settings, it applies to *every* repository automatically, including ones you create next month.
 
@@ -178,7 +184,12 @@ Five views, each making one mechanism visible:
 <details>
 <summary><b>1. Retrieval, which notes get injected?</b></summary>
 
-At session start, a query is built from your repo name, branch, last 5 commit subjects, and recently changed paths. Every note is scored:
+Two push paths, one shared scorer:
+
+- **Session start**: query built from your repo name, branch, last 5 commit subjects, and recently changed paths (broad context).
+- **Every prompt** (UserPromptSubmit): query is the prompt itself, the strongest signal available, injected adjacent to the decision point where models actually use it. Deduplicated against everything already injected this session.
+
+Both apply a **relevance floor**: a note must be topically relevant or have proven high utility, otherwise NOTHING is injected. This is the best-evidenced rule in the memory literature: measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default, not a failure.
 
 ```
 score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
@@ -196,6 +207,8 @@ Top-5 notes, capped at ≈2,500 tokens, written as factual statements, never imp
 <summary><b>2. Reflection, where notes come from</b></summary>
 
 The SessionEnd hook only *enqueues* (hooks must return in milliseconds). A background worker then reads the transcript and asks a headless Claude to distill it: only durable, reusable knowledge; typed (`recovery`/`strategy`/`optimization`/`decision`/`convention`); one claim per note; commit + files provenance mandatory; secrets forbidden by prompt **and** regex-scanned again before the file is written; near-duplicates suppressed by showing the reflector the 10 nearest existing notes. "Zero notes" is a valid and common outcome, routine sessions produce nothing, and that's correct.
+
+Two rules research says matter most at this step: the reflector must **preserve exact details verbatim** (error strings, versions, thresholds, flags: dropping specifics during distillation is the #1 measured failure mode of memory systems), and it must skip project-local ephemera that Claude Code's built-in per-project memory already owns.
 </details>
 
 <details>
@@ -207,13 +220,15 @@ The worker detects a **verifiable outcome** for each session, tests passed / bui
 Q ← clamp(Q + α·c·(r − Q), 0.05, 0.95)      α=0.3, |ΔQ| ≤ 0.15 per session
 ```
 
-where `c` ∈ [0,1] measures whether the note's content surfaced in the **assistant's own output**, matching the whole transcript would reward notes merely for being injected, a self-reinforcing loop. Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector, a bare ✓ is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever, that trend line is on the Metrics view, and if it's linear, forgetting is broken.
+where `c` is a **pinned LLM judge** using a fixed coarse rubric (1 = the note's fix was directly applied, 0.5 = plausibly helped, 0 = ignored), one cheap call per determinate session, judged against the assistant's own output. The model and prompt are pinned deliberately: changing a judge silently makes utility scores incomparable across time. A term-overlap heuristic is the automatic fallback (`contribution_judge: "heuristic"` disables the LLM entirely). Guardrails (clamp, per-session cap, verifiable-outcome anchor, and a deliberately conservative outcome detector, a bare ✓ is not a success signal) keep scores honest. Unused notes decay `Q·0.95^weeks`; below 0.20 and unused 60 days → archived. The vault size **plateaus** instead of growing forever, that trend line is on the Metrics view, and if it's linear, forgetting is broken.
 </details>
 
 <details>
 <summary><b>4. Staleness, the biggest accuracy lever</b></summary>
 
 Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to **needs-review**. Then a verification pass reads the *current* code and decides: claims still hold → restored to active with fresh provenance; code moved on → archived, with the reason logged. Every step appears in the Consolidation view as a diff. This converts the worst failure mode of any memory system, confidently applying outdated fixes, into a visible, self-healing review queue.
+
+The same nightly job also runs a **contradiction arbiter** on flagged near-duplicate pairs, classifying each as DUPLICATE (merge manually), UPDATE (one supersedes the other), or COEXISTING (keep both). Research shows mechanical newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones; classification avoids both errors. And it regenerates **entity hub pages** (`entities/*.md`), one page per shared concept listing its notes by learned usefulness, which is also what makes the vault's Obsidian graph navigable.
 </details>
 
 <details>
@@ -235,7 +250,7 @@ Opt-in by design, MCP tool definitions cost tokens in every session, so only reg
 node eval/run.mjs --runs 4        # arm A: memory on · arm B: MEMORY_OFF=1 control
 ```
 
-Same questions through headless `claude -p`, graded by expect-regex, reported as correct-rate / tokens / latency medians per arm. In this project's smoke eval, arm A answered 3/3 questions whose answers existed *only* in vault notes; arm B scored 0/3. Honest caveat: those questions were written from the notes, so they demonstrate the plumbing works end-to-end (injection → context → answer), not a field result. Write questions from *your* real incidents into `eval/questions.json`, that also makes the improve loop meaningful.
+Same questions through headless `claude -p`, graded by pinned expect-regex (never an unpinned LLM judge: those silently make scores incomparable over time), reported as correct-rate / tokens / latency medians per arm. Each question can set its own `cwd`, so the control arm gets a fair shot at re-deriving the answer from the repo itself: the comparison then honestly measures *memory vs re-discovery* (correctness, speed, and tokens), not memory vs nothing. Include **negative probes**, questions whose correct answer is "I don't know", to catch a vault that teaches the model to hallucinate confidence. The bundled `questions.json` is demo data wired to the fictional seed notes; write your real set from your own incident history (`eval/questions.real.json` pattern, run with `--file`).
 </details>
 
 <details>
@@ -261,8 +276,10 @@ Copy `config.example.json` → `config.json` (defaults apply for anything omitte
 | `decay_factor_per_week` / `decay_after_unused_days` | `0.95` / `7` | Q decay on unused notes |
 | `archive_below_q` / `archive_unused_days` | `0.20` / `60` | forgetting policy |
 | `q_alpha` / `q_delta_cap` / `q_clamp` | `0.3` / `0.15` / `[.05,.95]` | Q-update guardrails (anti-gaming) |
+| `prompt_k` / `prompt_min_sim` | `2` / `0.15` | per-prompt injection count and its aggressive relevance floor |
+| `contribution_judge` | `llm` | `llm` = pinned coarse-rubric judge, `heuristic` = term overlap, no LLM calls |
 | `reflector_model` | sonnet | model that writes notes (quality matters here) |
-| `eval_model` / `verify_model` | haiku | cheap models for eval & verification |
+| `eval_model` / `verify_model` | haiku | cheap, pinned models for eval, verification, judging |
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |
 | `repos` | `{}` | `name → local path` map powering git-diff invalidation |
 
@@ -316,21 +333,23 @@ Built and tested on Windows 11 (Git Bash present). Hook commands use forward sla
 
 ## 📚 Research foundations
 
-The design rules are distilled from published work: **ACE** (evolving playbooks; context-collapse & brevity-bias failure modes, hence incremental note ops, never wholesale rewrites) · **MemRL / TAME** (similarity × utility retrieval; contribution-weighted Q updates) · **CODESKILL** (verifiable rewards beat LLM-judge-only) · **SCM / Letta** (sleep-time consolidation; ~30% redundancy by session 10 without it) · **SleepGate** (stale-retrieval rate as a first-class metric) · **A-MEM** (Zettelkasten-style atomic linked notes beat raw chunks). Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
+The design rules are distilled from published work: **ACE** (evolving playbooks; context-collapse & brevity-bias failure modes, hence incremental note ops, never wholesale rewrites) · **MemRL / TAME** (similarity × utility retrieval; contribution-weighted Q updates) · **CODESKILL** (verifiable rewards beat LLM-judge-only) · **SCM / Letta** (sleep-time consolidation; ~30% redundancy by session 10 without it) · **SleepGate** (stale-retrieval rate as a first-class metric) · **A-MEM** (Zettelkasten-style atomic linked notes beat raw chunks) · **MemFail** (memory systems fail at the write step: over-compression that drops exact details, and bad merge decisions, hence the verbatim rule and the arbiter) · **"Context Length Alone Hurts"** (ACL 2025: even irrelevant filler degrades performance, hence the aggressive relevance floor and inject-nothing default) · **LongMemEval** (abstention ability as a first-class measure, hence negative probes). Full citations and the complete design document: [docs/PLAN.md](docs/PLAN.md).
 
 ## 🗺️ Roadmap
 
 - [x] Push-path injection, FTS5/BM25 retrieval, injection logging
-- [x] Reflection worker + verifiable-outcome Q scorer
+- [x] Per-prompt just-in-time retrieval (UserPromptSubmit) with session dedupe + relevance floor
+- [x] Reflection worker + verifiable-outcome Q scorer + pinned LLM contribution judge
 - [x] Nightly consolidation: decay · archive · git-diff invalidation · dedupe flagging
 - [x] LLM verify-pass: needs-review notes checked against current code, restored or archived
+- [x] Contradiction arbiter: dedupe pairs classified duplicate / update / coexisting
+- [x] Entity hub pages regenerated nightly
 - [x] MCP `vault_search` tool for mid-session pull (opt-in)
 - [x] Live dashboard with Prism diff views
-- [x] A/B eval harness + self-improvement loop
+- [x] A/B eval harness (per-question cwd, negative probes) + self-improvement loop
 - [x] Transcript backfill (mine past sessions into notes)
-- [ ] Embeddings behind `scoreNotes()` (when FTS5 precision measurably fails)
-- [ ] LLM contribution judge for Q updates (heuristic term-overlap today)
-- [ ] Entity hub pages & team sharing via git PRs
+- [ ] Team sharing via git PRs
+- [ ] Embeddings / MMR: deliberately skipped. Measured evidence says BM25 wins on technical vocabulary at this corpus size, and top-k redundancy is near zero with atomic deduped notes. Revisit only if logged retrieval misses accumulate.
 
 ## 📄 License
 

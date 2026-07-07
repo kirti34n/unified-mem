@@ -2,7 +2,7 @@
 // arm A = memory injected by SessionStart hook, arm B = MEMORY_OFF=1 control.
 // CLI:  node eval/run.mjs [--runs N] [--arms A,B] [--questions N] [--model m]
 // Also importable: runEval(opts) → results (used by scripts/improve.mjs).
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -11,13 +11,16 @@ import { CONFIG, ROOT } from '../scripts/vault.mjs';
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
 const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
-export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, model = CONFIG.eval_model, quiet = false } = {}) {
-  const qs = JSON.parse(readFileSync(join(EVAL_DIR, 'questions.json'), 'utf8')).slice(0, questions);
+export function runEval({ runs = 1, arms = ['A', 'B'], questions = Infinity, model = CONFIG.eval_model, quiet = false, file = null } = {}) {
+  const qs = JSON.parse(readFileSync(file || join(EVAL_DIR, 'questions.json'), 'utf8')).slice(0, questions);
   const rows = [];
   for (const q of qs) for (const arm of arms) for (let r = 0; r < runs; r++) {
     const t0 = Date.now();
+    // per-question cwd: the control arm gets a FAIR shot at re-deriving the answer
+    // from the repo itself, so the comparison measures memory vs re-discovery
+    const cwd = q.cwd && existsSync(q.cwd) ? q.cwd : ROOT;
     const res = spawnSync(`claude -p --model ${model} --strict-mcp-config`, {
-      input: q.q, encoding: 'utf8', shell: true, cwd: ROOT, timeout: 240_000,
+      input: q.q, encoding: 'utf8', shell: true, cwd, timeout: 240_000,
       env: { ...process.env, ...(arm === 'B' ? { MEMORY_OFF: '1' } : {}) },
     });
     const out = String(res.stdout || '');
@@ -49,6 +52,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     arms: opt('--arms', 'A,B').split(','),
     questions: Number(opt('--questions', Infinity)),
     model: opt('--model', CONFIG.eval_model),
+    file: opt('--file', null),
   });
   console.log('\nsummary:', JSON.stringify(result.summary, null, 2));
   mkdirSync(join(EVAL_DIR, 'results'), { recursive: true });

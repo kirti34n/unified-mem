@@ -6,7 +6,7 @@
 //   - a file named STOP exists in the vault root (create it to halt gracefully), or
 //   - the knob grid is exhausted (every neighbor tried and rejected).
 // Usage:  node scripts/improve.mjs [--iterations N | --forever] [--runs N] [--questions N] [--model m]
-// Log:    improve/log.jsonl (one JSON line per iteration — hypothesis, scores, verdict)
+// Log:    improve/log.jsonl (one JSON line per iteration, hypothesis, scores, verdict)
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, loadConfig } from './vault.mjs';
@@ -64,10 +64,10 @@ console.log(`baseline: correct ${(best.summary.A.correct_rate * 100).toFixed(0)}
 log({ ts: new Date().toISOString(), phase: 'baseline', summary: best.summary, score: bestScore });
 
 for (let i = 1; i <= ITER; i++) {
-  if (existsSync(join(ROOT, 'STOP'))) { console.log('STOP file found — halting.'); break; }
+  if (existsSync(join(ROOT, 'STOP'))) { console.log('STOP file found, halting.'); break; }
   const cfg = loadConfig();
   const h = hypotheses(cfg).next().value;
-  if (!h) { console.log('knob grid exhausted — halting. Add values to KNOBS in improve.mjs to continue.'); break; }
+  if (!h) { console.log('knob grid exhausted, halting. Add values to KNOBS in improve.mjs to continue.'); break; }
   tried.add(h.knob + '=' + h.value);
 
   console.log(`\n[${i}] HYPOTHESIS: ${h.knob}=${h.value} (was ${get(cfg, h.knob)}) improves retrieval`);

@@ -10,7 +10,7 @@ const PER_REPO = Number(process.argv.includes('--per-repo') ? process.argv[proce
 const PROJECTS = join(homedir(), '.claude', 'projects');
 mkdirSync(join(ROOT, 'queue'), { recursive: true });
 
-// cwd is recorded inside the transcript itself — more reliable than un-munging the dir name
+// cwd is recorded inside the transcript itself, more reliable than un-munging the dir name
 function cwdOf(path) {
   for (const line of readFileSync(path, 'utf8').split('\n').slice(0, 50)) {
     try { const j = JSON.parse(line); if (j.cwd) return j.cwd; } catch { }
@@ -41,4 +41,4 @@ for (const dir of readdirSync(PROJECTS)) {
     queued++;
   }
 }
-console.log(`\n${queued} transcripts queued — now run: node scripts/worker.mjs`);
+console.log(`\n${queued} transcripts queued, now run: node scripts/worker.mjs`);

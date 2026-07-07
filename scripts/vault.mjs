@@ -17,6 +17,7 @@ const DEFAULTS = {
   q_alpha: 0.3, q_delta_cap: 0.15, q_clamp: [0.05, 0.95],
   reflector_model: 'claude-sonnet-5', eval_model: 'claude-haiku-4-5-20251001',
   verify_model: 'claude-haiku-4-5-20251001', verify_cap: 5,
+  prompt_k: 2, prompt_min_sim: 0.15, contribution_judge: 'llm',
   repos: {},
 };
 export function loadConfig() {
@@ -63,6 +64,9 @@ export function openDb() {
 }
 
 // Minimal YAML-subset frontmatter parser: `key: value` and `key: [a, b]`.
+// Only known list keys parse as arrays, so a title like "[WIP] fix x" stays a string;
+// inline comments are stripped everywhere except title (titles may contain '#').
+const ARRAY_KEYS = new Set(['entities', 'repos', 'files', 'links']);
 export function parseNote(text, path = '') {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) return null;
@@ -71,10 +75,11 @@ export function parseNote(text, path = '') {
     const kv = /^([\w-]+):\s*(.*)$/.exec(line);
     if (!kv) continue;
     let v = kv[2].trim();
-    if (v.startsWith('[') && v.endsWith(']')) {
+    if (ARRAY_KEYS.has(kv[1]) && v.startsWith('[') && v.endsWith(']')) {
       v = v.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
     } else {
-      v = v.replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '');
+      if (kv[1] !== 'title') v = v.replace(/\s+#.*$/, '');
+      v = v.replace(/^["']|["']$/g, '');
       if (v === 'null' || v === '') v = null;
     }
     meta[kv[1]] = v;
@@ -160,16 +165,21 @@ export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
 }
 
 // Update frontmatter keys in a note file (and mirror to db); returns a unified-style diff.
+// Edits are scoped to the frontmatter block only, so a body line starting with
+// "status:" can never be clobbered.
 export function updateNoteFile(db, id, changes) {
   const row = db.prepare('SELECT path FROM notes WHERE id=?').get(id);
   if (!row?.path) return null;
   const before = readFileSync(row.path, 'utf8');
-  let after = before;
+  const fmMatch = /^(---\r?\n)([\s\S]*?)(\r?\n---)/.exec(before);
+  if (!fmMatch) return null;
+  let fm = fmMatch[2];
   for (const [key, val] of Object.entries(changes)) {
     const re = new RegExp(`^${key}:.*$`, 'm');
-    after = re.test(after) ? after.replace(re, `${key}: ${val}`)
-      : after.replace(/^---\r?\n/m, m => m + `${key}: ${val}\n`);
+    fm = re.test(fm) ? fm.replace(re, `${key}: ${val}`) : fm + `\n${key}: ${val}`;
   }
+  const fmStart = fmMatch.index + fmMatch[1].length;
+  const after = before.slice(0, fmStart) + fm + before.slice(fmStart + fmMatch[2].length);
   writeFileSync(row.path, after);
   const cols = ['status', 'q_value', 'last_used', 'last_validated', 'access_count', 'confidence'];
   for (const [key, val] of Object.entries(changes))

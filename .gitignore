@@ -1,4 +1,4 @@
-# your data — never commit
+# your data: never commit
 notes/
 index/
 queue/
@@ -6,3 +6,5 @@ eval/results/
 improve/
 config.json
 STOP
+entities/
+eval/questions.real.json
