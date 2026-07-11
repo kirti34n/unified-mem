@@ -8,7 +8,7 @@
 [![Node 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<img src="docs/demo.gif" width="90%" alt="A fresh Claude Code session answering a past 401-burst incident straight from the vault, citing two linked notes across repos, before opening a single file">
+<img src="docs/demo.gif" width="90%" alt="A new Claude Code session in one repo gets a Windows unicode-crash pitfall injected on UserPromptSubmit, surfaced from the shared vault because the prompt matched the situation, not any shared keyword">
 
 **[Click through the live dashboard](https://kirti34n.github.io/unified-mem/demo-site/)**: the real UI, no install, fictional data.
 
@@ -70,24 +70,11 @@ Where it sits relative to what you already have:
 4. **Maintain.** Nightly: git-diff invalidation, two-strike verification, duplicate arbitration (duplicate / update / coexisting), decay, archival, graph auto-linking, entity hubs, repo cards.
 5. **Measure.** The A/B harness proves value against a control with full repo access, and the improve loop tunes config only with 14+ samples and above-noise wins.
 
-<details>
-<summary><b><img src="docs/icons/share.svg" width="16" height="16"> The machinery diagram</b> (click to expand)</summary>
+<div align="center">
+<img src="docs/architecture.svg" width="92%" alt="Architecture of the learning loop. A Claude Code session in any repo reads memory on the SessionStart and UserPromptSubmit hooks and queues its transcript on SessionEnd and PreCompact. worker.mjs distills the queue into notes and scores each by its task outcome, writing them to the central vault (markdown notes plus a SQLite FTS5 index). consolidate.mjs maintains the vault nightly: verify, decay, git-diff invalidation. eval and tune-weights fit the ranking weights. Every step is observable on the localhost:7777 dashboard.">
+</div>
 
-```mermaid
-flowchart LR
-    subgraph session [Claude Code session, any repo]
-        A[SessionStart<br/>retrieve.mjs] -->|preferences + catalog<br/>+ repo card| B((session))
-        P[UserPromptSubmit<br/>retrieve-prompt.mjs] -->|just-in-time notes| B
-        B --> C[SessionEnd + PreCompact<br/>enqueue.mjs]
-    end
-    C -->|queue/| D[worker.mjs<br/>outcome scorer + judge + reflector]
-    D -->|new notes| V[(vault<br/>markdown + SQLite FTS5)]
-    V --> A
-    V --> P
-    N[consolidate.mjs<br/>nightly] -->|decay · verify ·<br/>arbiter · repo cards| V
-    E[eval/run.mjs] --> I[improve.mjs] -->|tunes| K[config.json] --> A
-```
-</details>
+<div align="center"><sub>The learning loop. Green is what the vault earns and injects, amber is nightly maintenance. The diagram is a theme-aware SVG and follows your light or dark GitHub theme.</sub></div>
 
 <details>
 <summary><b><img src="docs/icons/file-text.svg" width="16" height="16"> Exactly what a session receives</b> (click to expand)</summary>
@@ -149,7 +136,11 @@ The gap is the point: with full repo access the control re-derived the answer 44
 
 ## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
 
-Six live views at `localhost:7777`:
+<div align="center">
+<img src="docs/dashboard.gif" width="90%" alt="A walkthrough of the dashboard cycling through the sessions, notes graph, Q evolution, consolidation log, and metrics views at localhost:7777">
+</div>
+
+Six live views at `localhost:7777`, all reading a local, private vault:
 
 - <img src="docs/icons/map.svg" width="15" height="15"> **Repos**: every repository the memory knows, with per-repo enable/disable (auto-registered on first session)
 - <img src="docs/icons/list.svg" width="15" height="15"> **Sessions**: what each session received and the Q-delta each note earned from the outcome
@@ -157,6 +148,12 @@ Six live views at `localhost:7777`:
 - <img src="docs/icons/trend.svg" width="15" height="15"> **Q evolution**: usefulness being learned; rising lines help, sagging lines decay toward archive
 - <img src="docs/icons/diff.svg" width="15" height="15"> **Consolidation log**: every verification, decay, and merge as an exact red/green diff
 - <img src="docs/icons/database.svg" width="15" height="15"> **Metrics**: stale-retrieval rate, abstention rate, vault size trend, spend against the daily budget
+
+<div align="center">
+<img src="docs/screenshots/graph.png" width="49%" alt="The notes graph view: atomic notes colored by type and sized by learned usefulness, linked through shared entity nodes, with a needs-review note ringed in amber">
+&nbsp;
+<img src="docs/screenshots/consolidation.png" width="49%" alt="The consolidation log view: nightly decay, verification, git-diff invalidation, and edits, each shown as the exact red and green diff applied to the note">
+</div>
 
 ## <img src="docs/icons/info.svg" width="22" height="22"> Install
 
