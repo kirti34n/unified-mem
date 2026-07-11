@@ -6,5 +6,7 @@
   "homepage": "https://kirti34n.github.io/unified-mem/demo-site/",
   "repository": "https://github.com/kirti34n/unified-mem",
   "license": "MIT",
+  "hooks": "./hooks/unified-mem.hooks.json",
+  "mcpServers": "./.mcp.json",
   "keywords": ["memory", "claude-code", "mcp", "cross-repo", "ai-memory", "developer-tools"]
 }
