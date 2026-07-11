@@ -78,7 +78,7 @@ flowchart LR
     subgraph session [Claude Code session, any repo]
         A[SessionStart<br/>retrieve.mjs] -->|preferences + catalog<br/>+ repo card| B((session))
         P[UserPromptSubmit<br/>retrieve-prompt.mjs] -->|just-in-time notes| B
-        B --> C[SessionEnd<br/>enqueue.mjs]
+        B --> C[SessionEnd + PreCompact<br/>enqueue.mjs]
     end
     C -->|queue/| D[worker.mjs<br/>outcome scorer + judge + reflector]
     D -->|new notes| V[(vault<br/>markdown + SQLite FTS5)]
@@ -119,6 +119,17 @@ Vault notes matching this prompt (verify against current code):
 **Problem:** Parallel requests refreshing the same expired JWT raced...
 **Fix:** Redis SETNX lock keyed by user-id (commit 8f3ab21). 50ms retry, 5s TTL.
 **Gotchas:** Lock TTL must exceed p99 refresh latency.
+```
+
+Notes tagged as pitfalls render in a separate block, which the model acts on more reliably than an undifferentiated list:
+
+```
+Known pitfalls, do NOT repeat:
+
+## AVOID: proc.terminate() on Windows leaves orphaned child processes
+(repos: ci-scripts · files: tests/conftest.py)
+**Problem:** terminate() only kills the direct child; grandchildren keep the stdout pipe open and pytest hangs.
+**Fix:** kill the whole process tree at fixture teardown (psutil children, recursive).
 ```
 
 Always factual voice with provenance, never instructions, always labeled to verify against current code. Full detail on all eight mechanisms: [docs/MECHANISMS.md](docs/MECHANISMS.md).

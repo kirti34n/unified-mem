@@ -17,10 +17,15 @@
 - [x] Telemetry: abstention rate on the dashboard, vault-gap log for unmatched technical prompts
 - [x] Provenance stamping on every note (author, machine, session, trust class)
 - [x] Personal layer: pinned preferences (vault_remember MCP tool, remember.mjs CLI) and hash-tracked reference docs (ingest.mjs), scope-aware schema with reflector poisoning boundary
+- [x] Situation-keyed retrieval (`triggers`): situation phrases in the user's words, indexed as a high-weight FTS column, so a prompt matches on when a note applies, not just its solution text
+- [x] Pitfall/guidance polarity: pitfall notes render in a separate "do NOT repeat" injection block (negative-example framing)
+- [x] Adaptive-k retrieval (cut at a score cliff instead of padding to k) and PreCompact mid-session capture (queue detail before context is summarized away)
+- [x] Offline retrieval-weight fitting (`tune-weights.mjs`) from logged injection outcomes; rationale-first fail-closed contribution judge
+- [x] Starter vault of curated generic gotchas (`starter.mjs`, `trust: seed`, self-retiring as your own notes accumulate)
 ## Next
 
-- [x] **Package as a Claude Code plugin**: the repo is its own marketplace (`/plugin marketplace add kirti34n/unified-mem` then `/plugin install unified-mem@unified-mem`) bundling the three hooks and the MCP server. Config moved to `~/.unified-mem/` so it survives the ephemeral plugin install dir.
-- [ ] **Ship the worker/consolidator as a plugin monitor** so the learning loop needs no separate cron once monitor ergonomics fit (today the plugin covers in-session inject + capture; reflection and nightly upkeep are still scheduled separately).
+- [x] **Package as a Claude Code plugin**: the repo is its own marketplace (`/plugin marketplace add kirti34n/unified-mem` then `/plugin install unified-mem@unified-mem`) bundling the four hooks and the MCP server. Config moved to `~/.unified-mem/` so it survives the ephemeral plugin install dir.
+- [ ] **Ship the worker/consolidator as a plugin monitor** so the learning loop needs no separate cron once monitor ergonomics fit (today the plugin covers in-session inject + capture, and `init.mjs` auto-registers a daily Windows scheduled task for reflection + nightly upkeep, but the plugin itself does not yet schedule them).
 - [ ] **Multi-harness adapters**: the vault (markdown + SQLite FTS) is already agent-agnostic; only the hook adapters are Claude-specific. Thin adapters for Codex CLI, Gemini CLI, Cursor, and opencode (all of which expose session-end and context-injection hooks) would let one vault follow you across every agent you run. Codex first (largest audience overlap).
 - [ ] **Memory management UI**: dashboard endpoints to edit, retire, pin, and restore a note without hand-editing markdown, plus a "blind spots" view over the gap log. Also the review surface the team feature needs.
 - [ ] **Episodic layer**: a searchable three-line summary per session (pull-only, never auto-injected), so "what did we do in this repo last week" is answerable.
