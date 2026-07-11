@@ -23,15 +23,98 @@ const fail = (step, r) => {
 let r = run(['scripts/seed.mjs']);
 if (!/14 notes indexed/.test(r.stdout)) fail('seed (expected "14 notes indexed")', r);
 
+// A DEMO-ONLY vault must inject NOTHING into a real session: not the note bodies,
+// not the pinned prefs, and not the MEMORY CATALOG (fictional repo names must not
+// read as real cross-repo knowledge). The dashboard still shows demo data; this
+// injection surface excludes it.
+r = run(['scripts/retrieve.mjs'], JSON.stringify({ session_id: 'smoke-demo-only', cwd: tmpdir() }));
+if (r.stdout.trim() !== '') fail('demo-only vault must inject nothing (no catalog, no prefs, no bodies)', r);
+
+// A real (non-demo) fixture note: with a real note present, the catalog appears and
+// lists the real repo, but STILL excludes the demo repos, and demo notes never ride in.
+const fixtureNote = `---
+id: 2026-01-15-smoke-fixture
+type: recovery
+title: Smoke fixture note about zorblatt config parsing
+entities: [zorblatt]
+triggers: when zorblatt config parsing throws on nested arrays
+repos: [smoke-repo]
+files: [zorblatt.ts]
+source_commit: abc1234
+confidence: high
+q_value: 0.50
+access_count: 0
+last_used: null
+last_validated: 2026-01-15T00:00:00Z
+status: active
+trust: local
+links: []
+---
+**Problem:** zorblatt config parsing threw on nested arrays. **Fix:** flatten before parse.
+`;
+r = run(['-e',
+  `import('./scripts/vault.mjs').then(({NOTES_DIR,openDb,reindexNotes})=>{` +
+  `const fs=require('fs'),path=require('path');` +
+  `const dir=path.join(NOTES_DIR,'2026','01');fs.mkdirSync(dir,{recursive:true});` +
+  `fs.writeFileSync(path.join(dir,'2026-01-15-smoke-fixture.md'),process.env.FIXTURE_NOTE);` +
+  `reindexNotes(openDb());console.log('fixture written');})`,
+], null, { ...env, FIXTURE_NOTE: fixtureNote });
+if (!/fixture written/.test(r.stdout)) fail('write smoke fixture note', r);
+
 r = run(['scripts/retrieve.mjs'], JSON.stringify({ session_id: 'smoke-start', cwd: tmpdir() }));
-if (!r.stdout.includes('MEMORY CATALOG')) fail('session-start catalog', r);
+if (!r.stdout.includes('MEMORY CATALOG')) fail('session-start catalog (real note present)', r);
+if (!/smoke-repo/.test(r.stdout)) fail('catalog must list the real repo', r);
+if (/api-core|billing|auth-service|worker-jobs/i.test(r.stdout))
+  fail('trust gate: demo repo names must NOT appear in the catalog of a real session', r);
 if (r.stdout.includes('PERSONAL PREFERENCES')) fail('trust gate: demo-seeded preference must NOT pin into sessions', r);
+// these three demo notes have q_value >= 0.7 (0.76/0.82/0.80): before the fix they
+// rode the q>=0.7 utility bypass into every session regardless of trust; check by
+// rendered TITLE text (the output shows titles, not ids/slugs).
+if (/SETNX lock pattern|JWT refresh race causes|errors use the/i.test(r.stdout))
+  fail('trust gate: high-Q demo notes must NOT ride into a real session via the sim/bypass path', r);
 
 r = run(['scripts/retrieve-prompt.mjs'], JSON.stringify({
   session_id: 'smoke-p1', cwd: tmpdir(),
-  prompt: 'why intermittent 401 bursts during jwt token refresh in api-core?',
+  prompt: 'why does zorblatt config parsing throw on nested arrays?',
 }));
-if (!/JWT/.test(r.stdout)) fail('relevant prompt should inject the JWT note', r);
+if (!/zorblatt/i.test(r.stdout)) fail('relevant prompt should inject the fixture note', r);
+
+// A pitfall-polarity note must render in a separate "AVOID" block (Memento negative-example framing).
+const pitfallNote = `---
+id: 2026-01-16-smoke-pitfall
+type: recovery
+title: Do not flumber the quaxel before validating it
+entities: [quaxel]
+triggers: when flumbering a quaxel breaks validation
+polarity: pitfall
+repos: [smoke-repo]
+files: [quaxel.ts]
+source_commit: def5678
+confidence: high
+q_value: 0.50
+access_count: 0
+last_used: null
+last_validated: 2026-01-16T00:00:00Z
+status: active
+trust: local
+links: []
+---
+**Problem:** flumbering a quaxel before validation corrupts it. **Fix:** validate first, then flumber.
+`;
+r = run(['-e',
+  `import('./scripts/vault.mjs').then(({NOTES_DIR,openDb,reindexNotes})=>{` +
+  `const fs=require('fs'),path=require('path');` +
+  `const dir=path.join(NOTES_DIR,'2026','01');fs.mkdirSync(dir,{recursive:true});` +
+  `fs.writeFileSync(path.join(dir,'2026-01-16-smoke-pitfall.md'),process.env.PITFALL_NOTE);` +
+  `reindexNotes(openDb());console.log('pitfall written');})`,
+], null, { ...env, PITFALL_NOTE: pitfallNote });
+if (!/pitfall written/.test(r.stdout)) fail('write smoke pitfall note', r);
+r = run(['scripts/retrieve-prompt.mjs'], JSON.stringify({
+  session_id: 'smoke-p-pitfall', cwd: tmpdir(),
+  prompt: 'what happens when flumbering a quaxel breaks validation?',
+}));
+if (!/AVOID:/.test(r.stdout)) fail('pitfall note must render in a separate AVOID block', r);
+if (!/flumber/i.test(r.stdout)) fail('pitfall note content must be present', r);
 
 r = run(['scripts/retrieve-prompt.mjs'], JSON.stringify({
   session_id: 'smoke-p2', cwd: tmpdir(),
@@ -54,4 +137,4 @@ r = run(['-e',
 if (r.status !== 0) fail('capture path must log injections', r);
 
 rmSync(vault, { recursive: true, force: true });
-console.log('SMOKE OK: seed, catalog, trust gate, relevant injection, chatty abstention, pinning, capture logging');
+console.log('SMOKE OK: seed, demo-only injects nothing, catalog excludes demo repos, demo trust gate (pin + sim/bypass), real-note relevant injection, pitfall AVOID block, chatty abstention, pinning, capture logging');

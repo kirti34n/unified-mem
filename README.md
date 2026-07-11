@@ -32,7 +32,7 @@ One vault of small markdown notes (one claim each, with commit and file provenan
 
 | Piece | What it does |
 |---|---|
-| Three hooks | SessionStart injects a memory catalog, this repo's overview card, and pinned preferences; UserPromptSubmit injects notes matched to what you actually typed; SessionEnd queues the finished transcript |
+| Four hooks | SessionStart injects a memory catalog, this repo's overview card, and pinned preferences; UserPromptSubmit injects notes matched to what you actually typed; SessionEnd and PreCompact queue the transcript for distillation (PreCompact captures detail mid-session before context is summarized away) |
 | Background worker | Distills each finished session into typed notes (exact error strings and versions preserved verbatim), then scores every injected note against the session's real outcome |
 | Nightly job | Decays unused notes, re-verifies notes whose cited files changed in git, arbitrates near-duplicates, auto-links the knowledge graph, rebuilds repo cards |
 | Personal layer | `vault_remember` (MCP tool or CLI) pins your preferences into every session; `ingest.mjs` chunks your own docs so they surface when a prompt touches them |
@@ -64,7 +64,7 @@ Where it sits relative to what you already have:
 
 ## <img src="docs/icons/cpu.svg" width="22" height="22"> How it works
 
-1. **Capture.** SessionEnd queues the transcript. The worker distills anything durable into a note: one claim, at most 150 words, typed (`recovery`, `strategy`, `optimization`, `decision`, `convention`), schema-gated, secret-scanned, provenance-stamped. Routine sessions produce zero notes, correctly.
+1. **Capture.** SessionEnd (and PreCompact, mid-session) queues the transcript. The worker distills anything durable into a note: one claim, targeted at 150 words, typed (`recovery`, `strategy`, `optimization`, `decision`, `convention`), schema-gated, secret-scanned, provenance-stamped. Routine sessions produce zero notes, correctly.
 2. **Retrieve.** Every note is ranked by `0.40·similarity + 0.30·usefulness + 0.15·recency + 0.15·validity` (BM25 full text against your prompt and git context). Aggressive floors mean nothing rides along unless it is genuinely relevant or has repeatedly proven itself.
 3. **Learn.** On a verifiable outcome, each injected note's Q-value moves: `Q ← clamp(Q + α·c·(r − Q))`, where the contribution `c` comes from a pinned judge reading the assistant's own output. Guardrails: per-session delta cap, clamping, no update on ambiguous outcomes, a bare checkmark is not a success signal.
 4. **Maintain.** Nightly: git-diff invalidation, two-strike verification, duplicate arbitration (duplicate / update / coexisting), decay, archival, graph auto-linking, entity hubs, repo cards.
@@ -156,7 +156,7 @@ Six live views at `localhost:7777`:
 /plugin install unified-mem@unified-mem
 ```
 
-That wires up all three hooks and the `vault_search` / `vault_remember` MCP tools for every repo, now and in the future. Your vault lives in `~/.unified-mem/vault` (outside the plugin, so it survives updates). Needs Node 22.13+ on your PATH. The plugin covers the in-session parts (inject memory, queue finished sessions); to turn those queued sessions into notes and run nightly upkeep, also start the worker and consolidator (next section, or schedule them per the [FAQ](docs/FAQ.md)).
+That wires up all four hooks and the `vault_search` / `vault_remember` MCP tools for every repo, now and in the future. Your vault lives in `~/.unified-mem/vault` (outside the plugin, so it survives updates). Needs Node 22.13+ on your PATH. The plugin covers the in-session parts (inject memory, queue finished sessions); to turn those queued sessions into notes and run nightly upkeep, also start the worker and consolidator (next section, or schedule them per the [FAQ](docs/FAQ.md)).
 
 **Try the dashboard first (60 seconds, no install):**
 
@@ -170,7 +170,7 @@ node scripts/dashboard.mjs   # then open http://localhost:7777
 <details>
 <summary><b>Manual install</b> (without the plugin system)</summary>
 
-Three hooks in `~/.claude/settings.json` cover every repo you have and every repo you create later (merge into an existing `"hooks"` block; use the path you cloned to):
+Four hooks in `~/.claude/settings.json` cover every repo you have and every repo you create later (merge into an existing `"hooks"` block; use the path you cloned to):
 
 ```jsonc
 {
@@ -180,6 +180,8 @@ Three hooks in `~/.claude/settings.json` cover every repo you have and every rep
     "UserPromptSubmit": [{ "hooks": [{ "type": "command",
       "command": "node \"/path/to/unified-mem/scripts/retrieve-prompt.mjs\"", "timeout": 5 }] }],
     "SessionEnd":   [{ "hooks": [{ "type": "command",
+      "command": "node \"/path/to/unified-mem/scripts/enqueue.mjs\"", "timeout": 5 }] }],
+    "PreCompact":   [{ "hooks": [{ "type": "command",
       "command": "node \"/path/to/unified-mem/scripts/enqueue.mjs\"", "timeout": 5 }] }]
   }
 }
@@ -196,10 +198,12 @@ claude mcp add --scope user vault-search -- node "/path/to/unified-mem/scripts/m
 
 ```bash
 node scripts/worker.mjs --watch      # distills finished sessions into notes
-node scripts/consolidate.mjs        # nightly upkeep (cron / Task Scheduler lines in the FAQ)
+node scripts/consolidate.mjs        # nightly upkeep (init.mjs auto-registers this on Windows; cron in the FAQ)
 node scripts/backfill.mjs           # mine your PAST session transcripts into notes
+node scripts/starter.mjs            # optional: seed a fresh vault with ~10 real, generic gotchas (trust:seed)
 node scripts/seed.mjs --purge-demo  # drop the demo data once real notes flow
 node scripts/remember.mjs "Prefer pnpm over npm everywhere"   # your first pinned preference
+node scripts/tune-weights.mjs       # optional: once injection history accumulates, fit retrieval weights to it
 ```
 
 Repos auto-register on their first session (and every hook is user-level), so new and old repos are covered the moment you open Claude Code in them; manage them, including per-repo disable, from the dashboard's Repos view. All pipeline calls (reflection on sonnet, judging and verification on pinned cheap models) go through the Claude CLI: nothing local, nothing separate. Every knob (budgets, floors, models, caps) is documented in [docs/CONFIG.md](docs/CONFIG.md).

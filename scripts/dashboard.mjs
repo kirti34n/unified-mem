@@ -27,8 +27,14 @@ function state() {
     })(),
     abstention_rate: (() => {
       const s = db.prepare('SELECT COUNT(*) c FROM sessions WHERE demo=0').get().c;
-      const w = db.prepare('SELECT COUNT(DISTINCT session_id) c FROM injections WHERE demo=0').get().c;
-      return s ? (s - w) / s : 0;
+      // Join against sessions, not a bare DISTINCT count: a prompt-only injection
+      // (retrieve-prompt.mjs) can log an injection for a session_id that never got
+      // a sessions row (retrieve.mjs exited early: empty vault, disabled repo), which
+      // would otherwise make the "injected" count exceed the "total sessions" count
+      // and push this rate negative.
+      const w = db.prepare(`SELECT COUNT(DISTINCT i.session_id) c FROM injections i
+        JOIN sessions s ON s.id = i.session_id WHERE i.demo=0 AND s.demo=0`).get().c;
+      return s ? Math.max(0, s - w) / s : 0;
     })(),
     gaps: (() => {
       try { return readFileSync(join(VAULT, 'index', 'gaps.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length; }

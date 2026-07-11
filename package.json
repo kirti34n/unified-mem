@@ -17,7 +17,9 @@
     "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
     "remember": "node scripts/remember.mjs",
-    "ingest": "node scripts/ingest.mjs"
+    "ingest": "node scripts/ingest.mjs",
+    "starter": "node scripts/starter.mjs",
+    "tune-weights": "node scripts/tune-weights.mjs"
   },
   "dependencies": {}
 }

@@ -46,10 +46,37 @@ if (!existsSync(cfgPath)) {
   console.log(`NOTE: config.json exists but has no vault_dir. Add "vault_dir": "${target.replace(/\\/g, '/')}" to use the new vault; without it a legacy ./notes dir in the checkout still wins.`);
 }
 
+// Register a recurring scheduler task so worker.mjs + consolidate.mjs actually run.
+// (2026-07-11 audit: nothing scheduled them, so the "nightly dream job" the README
+// describes never fired on a real install; Q-learning and staleness invalidation
+// only happened when a human remembered to run the scripts by hand.) Idempotent:
+// checks the EXISTING task's own target, not just its name, before skipping --
+// a name-only check would report success while a relocated/re-cloned checkout's
+// task keeps firing against the old, possibly-deleted, path.
+if (process.platform === 'win32') {
+  const taskName = 'UnifiedMemWorker';
+  const runnerPath = join(ROOT, 'index', 'run-nightly.cmd');
+  const check = spawnSync(`schtasks /query /tn ${taskName} /fo LIST /v`, { encoding: 'utf8', shell: true });
+  const existingTarget = check.status === 0 ? (check.stdout.match(/Task To Run:\s*(.+)/)?.[1] || '').trim() : null;
+  if (existingTarget === null || !existingTarget.includes(runnerPath)) {
+    mkdirSync(dirname(runnerPath), { recursive: true });
+    writeFileSync(runnerPath,
+      `@echo off\r\n"${process.execPath}" "${join(ROOT, 'scripts', 'worker.mjs')}"\r\n"${process.execPath}" "${join(ROOT, 'scripts', 'consolidate.mjs')}"\r\n`);
+    const r = spawnSync(`schtasks /create /tn ${taskName} /tr "${runnerPath}" /sc daily /st 03:00 /f`, { encoding: 'utf8', shell: true });
+    console.log(r.status === 0
+      ? `scheduled task "${taskName}" ${existingTarget === null ? 'registered' : 're-pointed at this checkout'}: runs worker.mjs + consolidate.mjs daily at 03:00 (schtasks /delete /tn ${taskName} to remove)`
+      : `could not register scheduled task (${(r.stderr || r.stdout || '').trim()}); run worker.mjs + consolidate.mjs yourself, e.g. via Task Scheduler`);
+  } else {
+    console.log(`scheduled task "${taskName}" already registered and points at this checkout`);
+  }
+} else {
+  console.log(`no scheduler registered automatically on ${process.platform}. Add a cron entry yourself, e.g.:\n  0 3 * * * cd ${ROOT} && node scripts/worker.mjs && node scripts/consolidate.mjs`);
+}
+
 console.log(`
 vault ready: ${target}
 next steps:
-  node scripts/seed.mjs         # optional: demo data to explore the dashboard
+  node scripts/seed.mjs         # optional: demo data to explore the dashboard (only on a fresh vault)
   node scripts/dashboard.mjs    # http://localhost:7777
   add the three hooks from the README to ~/.claude/settings.json
   fill the repos map in config.json to enable staleness detection`);

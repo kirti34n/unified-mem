@@ -297,7 +297,7 @@ function rQ(m){
   const st=Object.fromEntries(S.notes.map(n=>[n.id,n.status]));
   $('#ql').innerHTML=series.map(s=>`<span class="key"><span class="ln" style="background:${s.color}"></span>${esc(s.name)}${st[s.id]!=='active'?` (${st[s.id]})`:''}</span>`).join('');
   $('#qt').innerHTML='<tr><th>when</th><th>note</th><th>op</th><th>Q</th><th>reward</th></tr>'+
-    S.q_history.slice().sort((a,b)=>b.ts.localeCompare(a.ts)).map(q=>
+    S.q_history.filter(q=>q.note_id&&q.old_q!=null&&q.new_q!=null).slice().sort((a,b)=>b.ts.localeCompare(a.ts)).map(q=>
     `<tr><td>${fmtTs(q.ts)}</td><td>${esc(shortName(q.note_id))}</td><td>${esc(q.op)}</td><td>${q.old_q.toFixed(2)} → ${q.new_q.toFixed(2)}</td><td>${q.reward??'·'}</td></tr>`).join('');
 }
 

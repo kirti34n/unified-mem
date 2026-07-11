@@ -18,6 +18,7 @@ Copy `config.example.json` to `config.json` next to the tool; defaults apply for
 | `contribution_judge` | `llm` | `llm` for the pinned judge, `heuristic` for zero LLM calls |
 | `daily_budget_usd` | `5` | hard daily cap on pipeline LLM spend (reflect, judge, verify, arbiter, and the eval harness) |
 | `max_reflections_per_run` | `10` | reflections per worker drain; excess stays queued for the next run |
+| `reflect_cooldown_min` | `20` | minutes a session stays reflect-suppressed after a paid reflect call, so a PreCompact + SessionEnd (or `--watch`) re-enqueue of the same session does not re-bill the reflector |
 | `reflector_model` | sonnet | model that writes notes (quality matters here) |
 | `eval_model` / `verify_model` | haiku | cheap pinned models for eval, verification, judging |
 | `verify_cap` | `5` | max needs-review notes verified per consolidation run |

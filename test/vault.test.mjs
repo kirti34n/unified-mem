@@ -9,8 +9,8 @@ import { tmpdir } from 'node:os';
 
 process.env.UNIFIED_MEM_VAULT_DIR = mkdtempSync(join(tmpdir(), 'umem-test-'));
 const {
-  parseNote, tokenize, scoreNotes, detectOutcome, makeDiff, updateNoteFile,
-  validateNote, duplicateFrontmatterKey, docFreq, reindexNotes, openDb, FTS5_OK, SECRET_RE, NOTES_DIR,
+  parseNote, tokenize, scoreNotes, adaptiveCut, detectOutcome, makeDiff, updateNoteFile,
+  validateNote, duplicateFrontmatterKey, docFreq, reindexNotes, openDb, FTS5_OK, SECRET_RE, NOTES_DIR, CONFIG,
 } = await import('../scripts/vault.mjs');
 const { grade } = await import('../eval/run.mjs');
 
@@ -219,4 +219,188 @@ test('docFreq: keyword fallback (no FTS5) counts document frequency from the not
   const df = docFreq(db, ['redis', 'zzznevermatchme'], false); // force the non-FTS branch
   assert.ok(df.get('redis') >= 1);        // present in at least one active note
   assert.equal(df.get('zzznevermatchme'), 0); // absent everywhere
+});
+
+// ---- regression tests for the 2026-07-11 audit fixes ----
+
+test('reindexNotes: access_count prefers the higher of file value and DB value', () => {
+  const p = join(noteDir, '2026-01-11-access.md');
+  writeFileSync(p, '---\nid: 2026-01-11-access\ntype: recovery\ntitle: access count note\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\naccess_count: 3\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db); // first index: file says 3, DB had nothing → 3
+  assert.equal(db.prepare("SELECT access_count FROM notes WHERE id='2026-01-11-access'").get().access_count, 3);
+  db.prepare("UPDATE notes SET access_count=9 WHERE id='2026-01-11-access'").run(); // simulate hooks bumping it
+  reindexNotes(db); // file still says 3 (a static template default); DB's 9 must win, not reset
+  assert.equal(db.prepare("SELECT access_count FROM notes WHERE id='2026-01-11-access'").get().access_count, 9);
+});
+
+test('updateNoteFile: a BOM-prefixed note stays manageable, not permanently frozen', () => {
+  const p = join(noteDir, '2026-01-12-bom-update.md');
+  writeFileSync(p, '﻿---\nid: 2026-01-12-bom-update\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  const diff = updateNoteFile(db, '2026-01-12-bom-update', { status: 'needs-review' });
+  assert.notEqual(diff, null); // must actually apply, not silently no-op
+  const after = readFileSync(p, 'utf8');
+  assert.match(after, /^status: needs-review$/m);
+  assert.equal(after[0], '﻿'); // BOM preserved, not corrupted
+});
+
+test('reindexNotes: q_value is clamped to the configured range', () => {
+  writeFileSync(join(noteDir, '2026-01-13-hot-q.md'),
+    '---\nid: 2026-01-13-hot-q\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 3.70\nstatus: active\nlinks: []\n---\nBody.');
+  writeFileSync(join(noteDir, '2026-01-14-cold-q.md'),
+    '---\nid: 2026-01-14-cold-q\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: -1\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT q_value FROM notes WHERE id='2026-01-13-hot-q'").get().q_value, CONFIG.q_clamp[1]);
+  assert.equal(db.prepare("SELECT q_value FROM notes WHERE id='2026-01-14-cold-q'").get().q_value, CONFIG.q_clamp[0]);
+});
+
+test('reindexNotes: a blank q_value falls through to the neutral default, not the clamp floor', () => {
+  writeFileSync(join(noteDir, '2026-01-18-blank-q.md'),
+    '---\nid: 2026-01-18-blank-q\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value:\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT q_value FROM notes WHERE id='2026-01-18-blank-q'").get().q_value, 0.5);
+});
+
+test('reindexNotes: a malformed id is dropped, not indexed with NaN scoring fields', () => {
+  writeFileSync(join(noteDir, '2026-01-15-badid.md'),
+    '---\nid: not-a-valid-id\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM notes WHERE id='not-a-valid-id'").get().c, 0);
+});
+
+test('reindexNotes: a file with a duplicated frontmatter key is skipped entirely', () => {
+  const id = '2026-01-16-dupkey';
+  writeFileSync(join(noteDir, `${id}.md`),
+    `---\nid: ${id}\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nq_value: 0.95\nstatus: active\nlinks: []\n---\nBody.`);
+  reindexNotes(db);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM notes WHERE id=?').get(id).c, 0);
+});
+
+test('reindexNotes: trust:user-explicit is preserved regardless of file location', () => {
+  // A path-based restriction here was tried and reverted: it broke real,
+  // legitimately hand-stamped preference notes living outside notes/personal/
+  // (the reflector can never self-attest this value regardless of path, since
+  // worker.mjs's provenance stamp is appended after the LLM's own frontmatter and
+  // always wins under last-key-wins parsing; the only real writers are rememberNote,
+  // which is safe, and the vault owner's own hand edits, which are always trusted).
+  writeFileSync(join(noteDir, '2026-01-17-hand-stamped-trust.md'),
+    '---\nid: 2026-01-17-hand-stamped-trust\ntype: preference\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: user\nconfidence: high\nq_value: 0.50\nstatus: active\ntrust: user-explicit\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT trust FROM notes WHERE id='2026-01-17-hand-stamped-trust'").get().trust, 'user-explicit');
+});
+
+// ---- triggers: situation-keyed retrieval (Memento-style) ----
+
+test('parseNote: triggers is semicolon-split, preserving commas within a phrase', () => {
+  const n = parseNote('---\nid: 2026-01-19-t\ntype: recovery\ntitle: t\ntriggers: when pytest hangs on Windows, especially with subprocess; when a dev server wont die by PID\n---\nbody');
+  assert.deepEqual(n.triggers, [
+    'when pytest hangs on Windows, especially with subprocess',
+    'when a dev server wont die by PID',
+  ]);
+});
+
+test('parseNote: triggers absent is undefined, not an empty array or crash', () => {
+  const n = parseNote(FULL_NOTE);
+  assert.equal(n.triggers, undefined);
+});
+
+test('parseNote: triggers tolerates the LLM mimicking sibling [a, b] bracket fields', () => {
+  const n = parseNote('---\nid: 2026-01-20-t\ntype: recovery\ntitle: t\ntriggers: [when pytest hangs on Windows, when a dev server wont die]\n---\nbody');
+  assert.deepEqual(n.triggers, ['when pytest hangs on Windows', 'when a dev server wont die']);
+});
+
+test('parseNote: triggers strips quote marks the reflector prompt example might echo back', () => {
+  const n = parseNote('---\nid: 2026-01-20-q\ntype: recovery\ntitle: t\ntriggers: "when pytest hangs on Windows"; "when a dev server wont die"\n---\nbody');
+  assert.deepEqual(n.triggers, ['when pytest hangs on Windows', 'when a dev server wont die']);
+});
+
+test('parseNote: a single unbracketed triggers phrase with an internal comma is kept whole', () => {
+  const n = parseNote('---\nid: 2026-01-20-c\ntype: recovery\ntitle: t\ntriggers: when the queue is empty, nothing happens\n---\nbody');
+  assert.deepEqual(n.triggers, ['when the queue is empty, nothing happens']);
+});
+
+test('parseNote: an unbalanced bracket in triggers leaves no stray bracket', () => {
+  assert.deepEqual(parseNote('---\nid: 2026-01-21-a\ntype: recovery\ntitle: t\ntriggers: [when x\n---\nb').triggers, ['when x']);
+  assert.deepEqual(parseNote('---\nid: 2026-01-21-b\ntype: recovery\ntitle: t\ntriggers: when x]\n---\nb').triggers, ['when x']);
+});
+
+test('reindexNotes: triggers is persisted and indexed for retrieval', () => {
+  writeFileSync(join(noteDir, '2026-01-19-zorblatt-trigger.md'),
+    '---\nid: 2026-01-19-zorblatt-trigger\ntype: recovery\ntitle: unrelated title text\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\ntriggers: when zorblatt throws on startup\nlinks: []\n---\nBody text also unrelated.');
+  reindexNotes(db);
+  const row = db.prepare("SELECT triggers FROM notes WHERE id='2026-01-19-zorblatt-trigger'").get();
+  assert.equal(row.triggers, 'when zorblatt throws on startup');
+  // the note's title/body share no words with the query; only triggers does, so a
+  // match here proves the triggers column is actually wired into retrieval, not just stored
+  const top = scoreNotes(db, tokenize('zorblatt throws on startup'), 5);
+  assert.ok(top.some(n => n.id === '2026-01-19-zorblatt-trigger'), FTS5_OK
+    ? 'FTS5 path: triggers column must be searched'
+    : 'keyword-fallback path: triggers must be included in the joined term set');
+});
+
+test('reindexNotes: multi-phrase triggers are stored with a delimiter that cannot appear inside a phrase', () => {
+  writeFileSync(join(noteDir, '2026-01-20-multi-trigger.md'),
+    '---\nid: 2026-01-20-multi-trigger\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\ntriggers: when X, especially under Y; when Z happens\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  const row = db.prepare("SELECT triggers FROM notes WHERE id='2026-01-20-multi-trigger'").get();
+  // a bare comma join would make "when X, especially under Y" indistinguishable
+  // from two separate phrases once stored; ' | ' preserves the original boundary
+  assert.equal(row.triggers, 'when X, especially under Y | when Z happens');
+});
+
+test('reindexNotes: a phrase containing the join delimiter is sanitized so the stored value stays unambiguous', () => {
+  // parseNote does not forbid ' | ' inside a phrase; phraseCsv must sanitize it so a
+  // re-split on ' | ' yields the correct phrase count, not a spurious extra phrase.
+  writeFileSync(join(noteDir, '2026-01-22-pipe.md'),
+    '---\nid: 2026-01-22-pipe\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\ntriggers: run A | run B; when C fails\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  const stored = db.prepare("SELECT triggers FROM notes WHERE id='2026-01-22-pipe'").get().triggers;
+  assert.equal(stored.split(' | ').length, 2); // exactly 2 phrases, embedded pipe sanitized to ' / '
+  assert.equal(stored, 'run A / run B | when C fails');
+});
+
+test('docFreq: triggers content counts toward document frequency', () => {
+  reindexNotes(db);
+  const df = docFreq(db, ['zorblatt'], FTS5_OK);
+  assert.ok(df.get('zorblatt') >= 1);
+  const dfNoFts = docFreq(db, ['zorblatt'], false);
+  assert.ok(dfNoFts.get('zorblatt') >= 1);
+});
+
+// ---- Memento adoptions: polarity, adaptive-k ----
+
+test('adaptiveCut: cuts at a >=50% score cliff, keeps all when scores taper smoothly', () => {
+  assert.equal(adaptiveCut([{ score: 0.9 }, { score: 0.85 }, { score: 0.2 }, { score: 0.15 }], 5).length, 2); // cliff after 2
+  assert.equal(adaptiveCut([{ score: 0.9 }, { score: 0.8 }, { score: 0.7 }, { score: 0.6 }], 5).length, 4); // no cliff
+  assert.equal(adaptiveCut([{ score: 0.5 }], 5).length, 1); // always keeps >=1
+  assert.equal(adaptiveCut([], 5).length, 0);
+  assert.equal(adaptiveCut([{ score: 0.9 }, { score: 0.85 }, { score: 0.8 }], 1).length, 1); // maxK respected
+});
+
+test('reindexNotes: polarity is stored, and any non-pitfall value falls back to guidance', () => {
+  writeFileSync(join(noteDir, '2026-01-23-pitfall.md'),
+    '---\nid: 2026-01-23-pitfall\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\npolarity: pitfall\nlinks: []\n---\nBody.');
+  writeFileSync(join(noteDir, '2026-01-23-garbage.md'),
+    '---\nid: 2026-01-23-garbage\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\npolarity: nonsense\nlinks: []\n---\nBody.');
+  writeFileSync(join(noteDir, '2026-01-23-absent.md'),
+    '---\nid: 2026-01-23-absent\ntype: recovery\ntitle: t\nentities: [t]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody.');
+  reindexNotes(db);
+  assert.equal(db.prepare("SELECT polarity FROM notes WHERE id='2026-01-23-pitfall'").get().polarity, 'pitfall');
+  assert.equal(db.prepare("SELECT polarity FROM notes WHERE id='2026-01-23-garbage'").get().polarity, 'guidance');
+  assert.equal(db.prepare("SELECT polarity FROM notes WHERE id='2026-01-23-absent'").get().polarity, 'guidance');
+});
+
+test('injections table carries component columns for offline weight-fitting', () => {
+  const cols = new Set(db.prepare('PRAGMA table_info(injections)').all().map(c => c.name));
+  for (const c of ['sim', 'qv', 'rec', 'val']) assert.ok(cols.has(c), `injections must have ${c} column`);
+});
+
+test('scoreNotes: returns raw components (sim, recency, validity) for injection logging', () => {
+  writeFileSync(join(noteDir, '2026-01-24-comp.md'),
+    '---\nid: 2026-01-24-comp\ntype: recovery\ntitle: componentcheck redis lock\nentities: [redis]\nrepos: [demo]\nfiles: [x]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nBody about componentcheck.');
+  reindexNotes(db);
+  const [top] = scoreNotes(db, tokenize('componentcheck redis lock'), 1);
+  assert.equal(typeof top.sim, 'number');
+  assert.equal(typeof top.recency, 'number');
+  assert.equal(typeof top.validity, 'number');
 });

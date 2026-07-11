@@ -1,6 +1,6 @@
 # How unified-mem works
 
-Seven mechanisms, each observable on the live dashboard. See [CONFIG.md](CONFIG.md) for every knob named here.
+Eight mechanisms, each observable on the live dashboard. See [CONFIG.md](CONFIG.md) for every knob named here.
 
 ## The layering premise
 
@@ -25,10 +25,12 @@ id: 2026-06-16-jwt-refresh-race
 type: recovery        # strategy | recovery | optimization | decision | convention
 title: JWT refresh race causes 401 bursts under load
 entities: [auth-service, jwt, redis]
+triggers: when 401s spike under load; when a JWT refresh races   # situation phrases in the user's words
 repos: [api-core, auth-service]
 files: [src/auth/token.ts, src/middleware/refresh.ts]
 source_commit: 8f3ab21
 confidence: high
+polarity: guidance    # guidance | pitfall (pitfall notes render in a separate "do NOT repeat" block)
 q_value: 0.50         # learned usefulness: starts neutral, earned over time
 status: active        # active | needs-review | archived
 links: ["[[2026-06-16-redis-lock-pattern]]"]
@@ -59,6 +61,8 @@ score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
 - recency: exponential half-life, default 30 days
 - validity: `active 1.0 · needs-review 0.4 · archived 0`
 
+Notes also carry a `triggers:` field (short situation phrases in the user's own words), indexed as a high-weight FTS column so a prompt matches on the SITUATION ("when tests hang on Windows") even when it shares no vocabulary with the note's solution text. After scoring, adaptive-k cuts the ranked list at its largest relative score drop of 50% or more, so a clear cliff drops weak tail matches instead of padding to `k` (proven high-utility notes admitted below the similarity floor are exempt from the cut). Retrieved notes are split by `polarity`: guidance notes inject normally, pitfall notes render in a separate "Known pitfalls, do NOT repeat" block, which the model acts on more reliably than an undifferentiated list.
+
 Injection is capped at roughly 2,500 tokens, written as factual statements, never imperative commands (out-of-band imperatives can trip Claude's prompt-injection defenses). Retrieval is pushed by hooks rather than waiting for the model to think of searching: model-initiated recall is unreliable, and pushed context carries no per-turn tool-definition overhead.
 
 ## 2. Reflection: where notes come from
@@ -75,7 +79,7 @@ The worker detects a verifiable outcome per session: tests passed or build green
 Q ← clamp(Q + α·c·(r − Q), 0.05, 0.95)      α=0.3, |ΔQ| ≤ 0.15 per session
 ```
 
-where `c` comes from a pinned LLM judge with a fixed coarse rubric (1 = the note's fix was directly applied, 0.5 = plausibly helped, 0 = ignored), one cheap call per determinate session, judged against the assistant's own output rather than the whole transcript (matching the transcript would reward notes merely for being injected). The judge model and prompt are pinned deliberately: changing a judge silently makes utility scores incomparable across time. A term-overlap heuristic is the automatic fallback; `contribution_judge: "heuristic"` disables the LLM entirely.
+where `c` comes from a pinned LLM judge with a fixed coarse rubric (1 = the note's fix was directly applied, 0.5 = plausibly helped, 0 = ignored), one cheap call per determinate session, judged against the assistant's own output rather than the whole transcript (matching the transcript would reward notes merely for being injected). The judge writes a one-line rationale per note before its final JSON verdict (rationale-first scoring is measurably more consistent); a note the judge omits or scores unparseably is credited 0 (fail-closed), never silently inflated. The judge model and prompt are pinned deliberately: changing a judge silently makes utility scores incomparable across time. A term-overlap heuristic is the automatic fallback; `contribution_judge: "heuristic"` disables the LLM entirely.
 
 Guardrails: the clamp, the per-session cap, the verifiable-outcome anchor, and a conservative outcome detector (a bare checkmark is not a success signal). Notes that stop contributing decay by `Q·0.95` per idle week, measured from last contribution rather than last injection, so a frequently-retrieved-but-never-helpful note cannot keep itself alive. Below Q 0.20 and unused 60 days, archived. Vault size plateaus instead of growing forever; the trend line is on the Metrics view.
 
@@ -95,7 +99,9 @@ See [EVAL.md](EVAL.md) for the full methodology, the honest caveats, and how to 
 node scripts/improve.mjs --iterations 5    # or --forever; create a STOP file to halt
 ```
 
-Research, hypothesis, implement, test, accept or revert, repeat: hill-climbs the retrieval tunables against the A-arm eval score, one knob at a time. Three guards keep it honest: it defaults to your real question set (the demo set falls back only with a loud warning, or an explicit flag), it refuses to run below 14 samples per measurement, and a noise guard accepts a change only if correctness strictly improves or ties with at least 15% fewer output characters. (At the 14-sample floor a single flipped answer clears the correctness bar, so treat accepted tweaks as suggestions to re-measure, not proofs; grow the question set past the recommended 15 for a firmer signal.) Weights are normalized per scoring call, so no accepted change can break the weighting invariant. Runs as a plain Node process spawning fresh headless calls (no CLI session limits); every iteration logs to `improve/log.jsonl`.
+Research, hypothesis, implement, test, accept or revert, repeat: hill-climbs the retrieval tunables against the A-arm eval score, one knob at a time. Three guards keep it honest: it REFUSES to run against the fictional demo question set (when no `eval/questions.real.json` exists and no `--demo` flag is passed), so it can never tune production config on fiction; it refuses to run below 14 ACTUAL samples per measurement (checked after the run, not just the plan, so a budget-truncated run cannot slip an under-powered decision through); and a noise guard accepts a change only if correctness strictly improves or ties with at least 15% fewer output characters. (At the 14-sample floor a single flipped answer clears the correctness bar, so treat accepted tweaks as suggestions to re-measure, not proofs; grow the question set past the recommended 15 for a firmer signal.) Weights are normalized per scoring call, so no accepted change can break the weighting invariant. Runs as a plain Node process spawning fresh headless calls (no CLI session limits); every iteration logs to `improve/log.jsonl`.
+
+Separately, `node scripts/tune-weights.mjs` is an OFFLINE fitter (no LLM calls). Every injection logs its raw component scores (similarity, q_value, recency, validity); the fitter grid-searches the four retrieval weights to maximize same-session helped-versus-not ranking on that logged history, with a per-component floor so no signal (especially similarity) can be zeroed. It refuses until enough labeled history accumulates, and `--apply` writes the fitted weights into config.
 
 ## 7. Backfill: start with your history
 

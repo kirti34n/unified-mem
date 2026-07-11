@@ -17,6 +17,16 @@ const opt = (f, d) => argv.includes(f) ? argv[argv.indexOf(f) + 1] : d;
 const FOREVER = argv.includes('--forever');
 const ITER = FOREVER ? Infinity : Number(opt('--iterations', 5));
 const qFile = opt('--file', defaultQuestionFile());
+// The improve loop mutates PRODUCTION config, so it must never hill-climb against the
+// fictional demo question set. defaultQuestionFile() silently falls back to the demo
+// questions.json when no questions.real.json exists, and evalOpts.quiet suppresses
+// eval/run.mjs's own demo warning, so guard here: refuse the demo set unless it was
+// passed deliberately (--file, or --demo to acknowledge it).
+if (!argv.includes('--file') && !argv.includes('--demo') && qFile.endsWith('questions.json')) {
+  console.error('refusing to run: no eval/questions.real.json found, so this would tune production config against ' +
+    'the FICTIONAL demo question set. Create eval/questions.real.json (see docs/EVAL.md) first, or pass --demo to override.');
+  process.exit(1);
+}
 const evalOpts = {
   runs: Number(opt('--runs', 2)),
   questions: Number(opt('--questions', Infinity)),
@@ -72,6 +82,13 @@ function* hypotheses(cfg) {
 console.log(`improve loop: ${FOREVER ? 'forever (create STOP file to halt)' : ITER + ' iterations'} · eval model ${evalOpts.model}`);
 console.log('RESEARCH: measuring baseline with current config...');
 let best = runEval(evalOpts);
+// The pre-flight gate above checks the PLANNED sample count; the daily budget cap
+// can still truncate the actual run mid-eval (eval/run.mjs's own budget guard).
+// A config-mutating loop must never trust a baseline built from a truncated run.
+if (best.summary.A.n < 14) {
+  console.error(`refusing to trust baseline: only ${best.summary.A.n} actual A-arm samples collected (budget cap or spawn failures cut the run short). Raise daily_budget_usd or re-run after spend resets.`);
+  process.exit(1);
+}
 let bestScore = scoreOf(best.summary);
 console.log(`baseline: correct ${(best.summary.A.correct_rate * 100).toFixed(0)}% · ${best.summary.A.median_chars}ch · ${best.summary.A.median_ms}ms · score ${bestScore.toFixed(1)}`);
 log({ ts: new Date().toISOString(), phase: 'baseline', summary: best.summary, score: bestScore });
@@ -92,10 +109,13 @@ for (let i = 1; i <= ITER; i++) {
   try {
     const r = runEval(evalOpts); // TEST (fresh claude -p sessions read the new config)
     summary = r.summary; score = scoreOf(summary);
-    if (beats(summary, best.summary)) { verdict = 'accept'; best = r; bestScore = score; }
+    // Actual, not planned: the budget cap can truncate THIS run too, and a lucky
+    // single sample (or a 0/0 tie against a zero baseline) must never flip a knob.
+    if (summary.A.n < 14) { verdict = 'insufficient-samples'; writeFileSync(CONFIG_PATH, backup); }
+    else if (beats(summary, best.summary)) { verdict = 'accept'; best = r; bestScore = score; }
     else { verdict = 'revert'; writeFileSync(CONFIG_PATH, backup); }
   } catch (e) { writeFileSync(CONFIG_PATH, backup); console.error('  eval failed:', e.message); }
-  console.log(`  TEST: correct ${summary ? (summary.A.correct_rate * 100).toFixed(0) + '%' : '?'} · score ${score?.toFixed(1) ?? '?'} vs best ${bestScore.toFixed(1)} → ${verdict.toUpperCase()}`);
+  console.log(`  TEST: correct ${summary ? (summary.A.correct_rate * 100).toFixed(0) + '%' : '?'} · n=${summary?.A.n ?? '?'} · score ${score?.toFixed(1) ?? '?'} vs best ${bestScore.toFixed(1)} → ${verdict.toUpperCase()}`);
   log({ ts: new Date().toISOString(), iter: i, knob: h.knob, value: h.value, summary, score, verdict });
 }
 console.log(`\ndone. best score ${bestScore.toFixed(1)} · winning config in config.json · full log in improve/log.jsonl`);

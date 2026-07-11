@@ -18,7 +18,7 @@
 
 **Key research numbers shaping the design:**
 - Evolving-playbook contexts (ACE) gained **+10.6%** on agent benchmarks from natural execution feedback alone.
-- Un-consolidated memory degrades fast: **~30% redundant entries by session 10, contradictions by ~50**.
+- Un-consolidated memory tends to accumulate redundancy over long runs (motivation, not a measured result: the often-quoted "~30% redundant entries by session ten" figure is from the AutoDream blog at zenvanriel.com, not a paper).
 - Algorithmic forgetting achieved **~90% noise reduction** while keeping recall.
 - Utility-scored retrieval (rank by "did this memory actually help before?") fixes RAG's core failure: semantically similar but strategically useless results.
 
@@ -47,7 +47,7 @@ covering exactly what they don't:
 |---|---|---|
 | R1 | Full LLM rewrites cause **context collapse**; over-summarizing causes **brevity bias** (ACE) | Never rewrite the vault wholesale. Only add / edit / merge **atomic notes**. |
 | R2 | Retrieve by **similarity × utility**, not similarity alone (MemRL) | Every note carries `q_value`; ranking = similarity × Q × validity. |
-| R3 | `Q ← Q + α·c·(r − Q)` from task outcomes, contribution-weighted (TAME) | Post-task scorer updates Q only for notes actually injected. |
+| R3 | `Q ← Q + α·c·(r − Q)` from task outcomes, contribution-weighted (MemRL base rule; the contribution weight c is our own extension, inspired by TAME's contribution-aware evaluation) | Post-task scorer updates Q only for notes actually injected. |
 | R4 | Typed learnings with provenance beat raw logs (IBM Trajectory Memory) | Reflector emits typed notes (`recovery/strategy/optimization/decision/convention`) with commit/file provenance. |
 | R5 | Verifiable feedback (tests/build) + capped LLM judge beats judge-only (CODESKILL) | Anchor reward `r` on tests passing / build green / no rollback. |
 | R6 | Sleep-time consolidation beats lazy in-session updates (Letta, AutoDream) | Nightly "dream" job: merge, resolve contradictions, decay, archive. |
@@ -257,7 +257,7 @@ in your final summary so the reflector can capture it.
 
 ## 9. References
 
-**Research:** ACE arxiv.org/abs/2510.04618 · MemRL (effloow.com) · TAME arxiv.org/pdf/2602.03224 · IBM Trajectory Memory arxiv.org/pdf/2603.10600 · CODESKILL arxiv.org/html/2605.25430 · SCM arxiv.org/abs/2604.20943 · SleepGate arxiv.org/html/2603.14517v1 · A-MEM survey arxiv.org/pdf/2606.24937 · Letta letta.com/blog/agent-memory
+**Research:** ACE arxiv.org/abs/2510.04618 · MemRL arxiv.org/abs/2601.03192 · TAME arxiv.org/pdf/2602.03224 · IBM Trajectory Memory arxiv.org/pdf/2603.10600 · CODESKILL arxiv.org/html/2605.25430 · SCM arxiv.org/abs/2604.20943 · SleepGate arxiv.org/html/2603.14517v1 · A-MEM survey arxiv.org/pdf/2606.24937 · Letta letta.com/blog/agent-memory
 
 **Tools:** claude-mem github.com/thedotmack/claude-mem · AutoDream (zenvanriel.com) · memsearch (milvus.io) · codebase-memory-mcp github.com/DeusData/codebase-memory-mcp · codegraph github.com/colbymchenry/codegraph · Graphify (dev.to) · Cipher/ByteRover · Mem0 docs.mem0.ai/integrations/claude-code · Neo4j create-context-graph · Graphiti github.com/getzep/graphiti
 

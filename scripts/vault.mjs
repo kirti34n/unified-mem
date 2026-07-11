@@ -1,7 +1,7 @@
 // Shared vault library: config, schema, note parsing, FTS5 reindex, scored retrieval,
 // note-file frontmatter updates + diff generation for the consolidation log.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, statSync, writeFileSync, appendFileSync, existsSync, renameSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir, userInfo, hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -31,8 +31,12 @@ export const CONFIG_PATH = existsSync(join(ROOT, 'config.json'))
   ? join(ROOT, 'config.json')
   : join(homedir(), '.unified-mem', 'config.json');
 export function loadConfig() {
-  try { return { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }; }
-  catch { return DEFAULTS; }
+  // weights is deep-merged: a config that hand-tunes only one weight (e.g. {"sim":0.6})
+  // must not leave the other three undefined, which silently turns every score into NaN.
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+    return { ...DEFAULTS, ...parsed, weights: { ...DEFAULTS.weights, ...(parsed.weights || {}) } };
+  } catch { return DEFAULTS; }
 }
 export const CONFIG = loadConfig();
 
@@ -60,14 +64,15 @@ CREATE TABLE IF NOT EXISTS notes (
   q_value REAL, repos TEXT, entities TEXT, files TEXT, links TEXT,
   source_commit TEXT, created TEXT, last_used TEXT, last_validated TEXT,
   access_count INTEGER DEFAULT 0, body TEXT, path TEXT, scope TEXT DEFAULT 'shared',
-  trust TEXT DEFAULT 'unknown'
+  trust TEXT DEFAULT 'unknown', triggers TEXT DEFAULT '', polarity TEXT DEFAULT 'guidance'
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, ts TEXT, repo TEXT, outcome TEXT,
   tokens_injected INTEGER, summary TEXT, demo INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS injections (
-  session_id TEXT, note_id TEXT, rank INTEGER, score REAL, demo INTEGER DEFAULT 0
+  session_id TEXT, note_id TEXT, rank INTEGER, score REAL, demo INTEGER DEFAULT 0,
+  sim REAL, qv REAL, rec REAL, val REAL
 );
 CREATE TABLE IF NOT EXISTS q_history (
   note_id TEXT, session_id TEXT, ts TEXT, old_q REAL, new_q REAL,
@@ -101,6 +106,11 @@ export function openDb() {
   db.exec(SCHEMA);
   try { db.exec("ALTER TABLE notes ADD COLUMN scope TEXT DEFAULT 'shared'"); } catch { } // migration for pre-P3 vaults
   try { db.exec("ALTER TABLE notes ADD COLUMN trust TEXT DEFAULT 'unknown'"); } catch { } // trust gates pinning + utility bypass
+  try { db.exec("ALTER TABLE notes ADD COLUMN triggers TEXT DEFAULT ''"); } catch { } // situation phrases, optional
+  try { db.exec("ALTER TABLE notes ADD COLUMN polarity TEXT DEFAULT 'guidance'"); } catch { } // guidance vs pitfall (negative-example framing)
+  // injection component scores (for offline weight-fitting via tune-weights.mjs)
+  for (const c of ['sim', 'qv', 'rec', 'val'])
+    try { db.exec(`ALTER TABLE injections ADD COLUMN ${c} REAL`); } catch { }
   return db;
 }
 
@@ -108,6 +118,11 @@ export function openDb() {
 // Only known list keys parse as arrays, so a title like "[WIP] fix x" stays a string;
 // inline comments are stripped everywhere except title (titles may contain '#').
 const ARRAY_KEYS = new Set(['entities', 'repos', 'files', 'links']);
+// triggers holds short natural-language SITUATION phrases (Memento-style: retrieval
+// keyed to when a note applies, not just what it says), which routinely contain
+// commas of their own ("when X, especially under Y"); a semicolon-delimited plain
+// line avoids the bracketed comma-split ARRAY_KEYS uses, which would mangle them.
+const PHRASE_KEYS = new Set(['triggers']);
 export function parseNote(text, path = '') {
   // tolerate a leading UTF-8 BOM (Notepad / some PowerShell redirects add one),
   // else the ^--- anchor misses and a hand-edited note silently drops from the index.
@@ -120,6 +135,21 @@ export function parseNote(text, path = '') {
     let v = kv[2].trim();
     if (ARRAY_KEYS.has(kv[1]) && v.startsWith('[') && v.endsWith(']')) {
       v = v.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    } else if (PHRASE_KEYS.has(kv[1])) {
+      // Defensive against the LLM mimicking its OWN sibling fields (entities/repos/
+      // files/links are all shown as bracketed [a, b] elsewhere in the same reflector
+      // template): a wrapping [ ] pair is stripped first. ';' is the intended phrase
+      // delimiter (chosen because a phrase may contain a comma of its own); only fall
+      // back to splitting on ',' when the value was ALSO bracket-wrapped (clear
+      // evidence of sibling-format mimicry) so a single unbracketed phrase with an
+      // internal comma and no semicolon is correctly kept as ONE phrase, not split.
+      // Each phrase is quote-stripped like every other field's elements are.
+      const bracketed = v.startsWith('[') && v.endsWith(']');
+      if (bracketed) v = v.slice(1, -1).trim();
+      const parts = v.includes(';') ? v.split(';') : bracketed ? v.split(',') : [v];
+      // strip a stray leading '[' / trailing ']' too (an UNBALANCED bracket the block
+      // above leaves in place), alongside quotes, so no phrase carries a stray bracket.
+      v = parts.map(s => s.trim().replace(/^[["']|[\]"']$/g, '')).filter(Boolean);
     } else {
       if (kv[1] !== 'title') v = v.replace(/\s+#.*$/, '');
       v = v.replace(/^["']|["']$/g, '');
@@ -148,20 +178,63 @@ export function reindexNotes(db) {
     .map(r => [r.id, r]));
   const up = db.prepare(`INSERT OR REPLACE INTO notes
     (id,title,type,status,confidence,q_value,repos,entities,files,links,
-     source_commit,created,last_used,last_validated,access_count,body,path,scope,trust)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     source_commit,created,last_used,last_validated,access_count,body,path,scope,trust,triggers,polarity)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const seen = [];
   let n = 0;
+  const ID_RE = /^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/;
   for (const p of walkNotes()) {
-    const note = parseNote(readFileSync(p, 'utf8'), p);
-    if (!note?.id) continue;
+    const raw = readFileSync(p, 'utf8');
+    // A duplicated frontmatter key surviving to disk (a pre-fix legacy file, a hand
+    // edit, or a dropped file) must not silently re-enable the Q-pinning poisoning
+    // trick just because it made it past the write-time gate once before.
+    const dupKey = duplicateFrontmatterKey(raw);
+    if (dupKey) { console.warn(`reindex: skipping ${p} (duplicate frontmatter key '${dupKey}')`); continue; }
+    const note = parseNote(raw, p);
+    // A malformed id is unusable as both a primary key and a date (note.id.slice(0,10)
+    // becomes garbage `created`), which propagates NaN into recency/scoring; drop it
+    // rather than let it shuffle unpredictably into a top-k slice.
+    if (!note?.id || !ID_RE.test(note.id)) continue;
     const was = prior.get(note.id);
     const csv = x => Array.isArray(x) ? x.join(',') : (x ?? '');
+    // triggers phrases can legitimately contain commas themselves (that's the whole
+    // reason the frontmatter delimiter is ';' and not ','); rejoining with a bare
+    // comma via csv() would make the phrase boundary unrecoverable for any future
+    // reader of this column. ' | ' is the reserved join delimiter, made unambiguous
+    // by replacing any literal ' | ' a phrase happens to contain with ' / ' before
+    // joining (parseNote does not forbid '|' inside a phrase, so we sanitize here).
+    const phraseCsv = x => Array.isArray(x) ? x.map(s => String(s).split(' | ').join(' / ')).join(' | ') : (x ?? '');
+    // q_value is untrusted file content (hand-edited or dropped in): clamp to the
+    // configured range so a raw number cannot escape the utility-bypass threshold.
+    // A missing/blank field (parseNote yields null) must fall through to the neutral
+    // default, not get coerced by Number(null)===0 and clamped to the floor instead.
+    const qRaw = note.q_value == null ? NaN : Number(note.q_value);
+    const q = Number.isFinite(qRaw) ? Math.max(CONFIG.q_clamp[0], Math.min(CONFIG.q_clamp[1], qRaw)) : 0.5;
+    // trust:user-explicit is a pinning credential (bypasses the similarity floor and
+    // rides into every session). Read as-is, with no path restriction: an earlier
+    // version of this gate restricted it to notes/personal/, which broke a real,
+    // legitimately hand-stamped preference note living elsewhere. If a prompt-injected
+    // transcript gets the reflector to emit its own trust: line, worker.mjs's
+    // provenance stamp is inserted into the SAME frontmatter block (not appended
+    // after it), producing a genuine duplicate key; the duplicateFrontmatterKey
+    // check just above this line (not last-key-wins parsing) is what actually drops
+    // that note before it ever reaches this function. The only sources of a single,
+    // unduplicated trust:user-explicit line are rememberNote (hardcoded, safe) and a
+    // deliberate hand-edit by the vault's owner, who can edit any file in their own
+    // vault regardless of what this gate does.
+    const trust = note.trust ?? 'unknown';
+    // polarity is presentation framing (guidance vs pitfall); anything but the two
+    // known values falls back to guidance so a malformed field can't hide a note.
+    const polarity = note.polarity === 'pitfall' ? 'pitfall' : 'guidance';
+    // access_count is DB-tracked telemetry (hooks bump it, files never carry a live
+    // value); prefer whichever is higher so a stale file default cannot roll it back.
+    const accessRaw = Number(note.access_count ?? 0);
+    const access = Math.max(Number.isFinite(accessRaw) ? accessRaw : 0, was?.access_count ?? 0);
     up.run(note.id, note.title ?? '', note.type ?? '', note.status ?? 'active',
-      note.confidence ?? 'med', Number(note.q_value ?? 0.5), csv(note.repos),
+      note.confidence ?? 'med', q, csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
       note.id.slice(0, 10), note.last_used ?? was?.last_used ?? null, note.last_validated ?? null,
-      Number(note.access_count ?? was?.access_count ?? 0), note.body ?? '', p, note.scope ?? 'shared', note.trust ?? 'unknown');
+      access, note.body ?? '', p, note.scope ?? 'shared', trust, phraseCsv(note.triggers), polarity);
     seen.push(note.id);
     n++;
   }
@@ -178,8 +251,8 @@ export function reindexNotes(db) {
     db.exec('BEGIN');
     try {
       db.exec('DROP TABLE IF EXISTS notes_fts;');
-      db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body);');
-      db.prepare("INSERT INTO notes_fts SELECT id,title,entities,repos,files,body FROM notes WHERE status != 'archived'").run();
+      db.exec('CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, title, entities, repos, files, body, triggers);');
+      db.prepare("INSERT INTO notes_fts SELECT id,title,entities,repos,files,body,triggers FROM notes WHERE status != 'archived'").run();
       db.exec('COMMIT');
     } catch (e) { try { db.exec('ROLLBACK'); } catch { } throw e; }
   }
@@ -196,8 +269,8 @@ export function docFreq(db, terms, useFts = FTS5_OK) {
       catch { return [t, 0]; }
     }));
   }
-  const rows = db.prepare("SELECT title,entities,repos,files,body FROM notes WHERE status != 'archived'").all();
-  const docs = rows.map(r => new Set(tokenize([r.title, r.entities, r.repos, r.files, r.body].join(' '))));
+  const rows = db.prepare("SELECT title,entities,repos,files,body,triggers FROM notes WHERE status != 'archived'").all();
+  const docs = rows.map(r => new Set(tokenize([r.title, r.entities, r.repos, r.files, r.body, r.triggers].join(' '))));
   return new Map(terms.map(t => [t, docs.filter(s => s.has(t)).length]));
 }
 
@@ -209,6 +282,20 @@ export const tokenize = s =>
 
 const VALIDITY = { active: 1.0, 'needs-review': 0.4, archived: 0 };
 
+// bm25() weight args map positionally to notes_fts's full column list, INCLUDING the
+// UNINDEXED id column (verified empirically: a 0 there is inert, it just keeps the
+// arg count matching table column count). Order: id, title, entities, repos, files,
+// body, triggers. triggers is weighted highest: it holds short SITUATION phrases in
+// the user's own words (Memento-style trigger-keyed retrieval), which is a stronger
+// match signal for "have I hit this before" than overlap with the solution's prose.
+export const FTS_WEIGHTS = [0, 1.5, 1, 1, 1, 1, 2.5];
+// Dedupe (consolidate.mjs) asks a different question than retrieval: "do these two
+// notes describe the same underlying fact/fix", not "does the same kind of situation
+// trigger both". Two unrelated notes can easily share a generic trigger phrase
+// ("when tests hang") without being duplicates, so triggers is excluded (weight 0)
+// here, unlike FTS_WEIGHTS above where it is deliberately boosted.
+export const DEDUPE_FTS_WEIGHTS = [0, 1, 1, 1, 1, 1, 0];
+
 // FTS5/BM25 similarity per note id, normalized 0..1 (1 = best match). {} when FTS5
 // is unavailable or on failure, which makes scoreNotes fall back to keyword overlap.
 function ftsSim(db, queryTerms) {
@@ -216,7 +303,7 @@ function ftsSim(db, queryTerms) {
   try {
     const match = queryTerms.map(t => `"${t.replace(/"/g, '')}"`).join(' OR ');
     if (!match) return {};
-    const rows = db.prepare('SELECT id, bm25(notes_fts) r FROM notes_fts WHERE notes_fts MATCH ?').all(match);
+    const rows = db.prepare(`SELECT id, bm25(notes_fts, ${FTS_WEIGHTS.join(',')}) r FROM notes_fts WHERE notes_fts MATCH ?`).all(match);
     if (!rows.length) return {};
     const best = Math.min(...rows.map(r => r.r)); // bm25: more negative = better
     return Object.fromEntries(rows.map(r => [r.id, best < 0 ? r.r / best : 0]));
@@ -236,7 +323,7 @@ export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
     if (validity === 0) return null;
     let sim = sims[n.id];
     if (sim === undefined && !Object.keys(sims).length) { // FTS unavailable → keyword fallback
-      const terms = tokenize([n.title, n.entities, n.repos, n.files, n.body].join(' '));
+      const terms = tokenize([n.title, n.entities, n.repos, n.files, n.body, n.triggers].join(' '));
       sim = Math.min(1, terms.filter(t => q.has(t)).length / Math.sqrt((q.size || 1) * (terms.length || 1)) * 6);
     }
     sim ??= 0;
@@ -244,8 +331,26 @@ export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
     const ageDays = Math.max(0, (now - ref) / 86400000);
     const recency = Math.exp(-ageDays * Math.LN2 / CONFIG.recency_half_life_days);
     const score = w.sim * sim + w.q * n.q_value + w.recency * recency + w.validity * validity;
-    return { ...n, score, sim };
+    // raw (pre-weight) components exposed so the hooks can log them per injection;
+    // tune-weights.mjs replays those logs under candidate weight vectors offline.
+    return { ...n, score, sim, recency, validity };
   }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, k);
+}
+
+// Adaptive-k: cut a scored, descending-sorted list at its largest RELATIVE score drop
+// instead of always padding to k. A clear "cliff" means the notes past it are much
+// weaker and only dilute attention (and pick up unfair r=0 judgments); when scores
+// taper smoothly there is no cliff and the full k is kept. Always keeps >= 1.
+export function adaptiveCut(scored, maxK = scored.length) {
+  const list = scored.slice(0, maxK);
+  if (list.length <= 1) return list;
+  let cut = list.length, bestDrop = 0;
+  for (let i = 1; i < list.length; i++) {
+    const prev = list[i - 1].score, cur = list[i].score;
+    const drop = prev > 0 ? (prev - cur) / prev : 0; // relative gap
+    if (drop > bestDrop && drop >= 0.5) { bestDrop = drop; cut = i; } // >=50% cliff only
+  }
+  return list.slice(0, cut);
 }
 
 // Update frontmatter keys in a note file (and mirror to db); returns a unified-style diff.
@@ -257,7 +362,10 @@ export function updateNoteFile(db, id, changes) {
   let before;
   try { before = readFileSync(row.path, 'utf8'); }
   catch { return null; } // file deleted out from under us: skip; reindex reconciles the row
-  const fmMatch = /^(---\r?\n)([\s\S]*?)(\r?\n---)/.exec(before);
+  // BOM-tolerant, matching parseNote: a note edited by a BOM-writing tool (Notepad,
+  // PowerShell -Encoding utf8) must stay manageable, else every future Q/status
+  // update silently no-ops while callers log the change as if it happened.
+  const fmMatch = /^(﻿?---\r?\n)([\s\S]*?)(\r?\n---)/.exec(before);
   if (!fmMatch) return null;
   let fm = fmMatch[2];
   for (const [key, val] of Object.entries(changes)) {
@@ -267,7 +375,14 @@ export function updateNoteFile(db, id, changes) {
   }
   const fmStart = fmMatch.index + fmMatch[1].length;
   const after = before.slice(0, fmStart) + fm + before.slice(fmStart + fmMatch[2].length);
-  writeFileSync(row.path, after);
+  // tmp + rename: a concurrent reindex must never observe a truncated file mid-write.
+  // The tmp name must be unique per writer: worker.mjs's --watch daemon and
+  // consolidate.mjs's nightly job can both call updateNoteFile around the same time,
+  // and a fixed `${path}.tmp` would let them race on the same tmp file, throwing
+  // ENOENT on the loser's renameSync once the winner's rename already consumed it.
+  const tmp = `${row.path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(tmp, after);
+  renameSync(tmp, row.path);
   const cols = ['status', 'q_value', 'last_used', 'last_validated', 'access_count', 'confidence'];
   for (const [key, val] of Object.entries(changes))
     if (cols.includes(key)) db.prepare(`UPDATE notes SET ${key}=? WHERE id=?`).run(val, id);
@@ -387,18 +502,23 @@ ${text}
   if (invalid) throw new Error(invalid);
   const dir = join(NOTES_DIR, 'personal');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${id}.md`), note);
+  const notePath = join(dir, `${id}.md`);
+  const tmp = `${notePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(tmp, note);
+  renameSync(tmp, notePath);
   reindexNotes(db);
   return id;
 }
 
 // ---- LLM pipeline calls: one path, budget-guarded, cost-ledgered ----
-const LEDGER = join(VAULT, 'index', 'cost-ledger.jsonl');
+// Monthly rotation: todaySpendUsd only ever needs the current month's entries, so a
+// bounded file keeps every call's read-and-parse cheap instead of growing forever.
+const ledgerPath = () => join(VAULT, 'index', `cost-ledger-${new Date().toISOString().slice(0, 7)}.jsonl`);
 
 export function todaySpendUsd() {
   try {
     const today = new Date().toISOString().slice(0, 10);
-    return readFileSync(LEDGER, 'utf8').split('\n').filter(Boolean)
+    return readFileSync(ledgerPath(), 'utf8').split('\n').filter(Boolean)
       .map(l => { try { return JSON.parse(l); } catch { return null; } })
       .filter(e => e && e.ts?.startsWith(today))
       .reduce((s, e) => s + (e.usd || 0), 0);
@@ -411,7 +531,7 @@ export function todaySpendUsd() {
 export function appendLedger(kind, model, usd) {
   try {
     mkdirSync(join(VAULT, 'index'), { recursive: true });
-    appendFileSync(LEDGER, JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
+    appendFileSync(ledgerPath(), JSON.stringify({ ts: new Date().toISOString(), kind, model, usd }) + '\n');
   } catch { }
 }
 

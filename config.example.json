@@ -34,6 +34,7 @@
   "contribution_judge": "llm",
   "daily_budget_usd": 5,
   "max_reflections_per_run": 10,
+  "reflect_cooldown_min": 20,
   "personal_budget_chars": 800,
   "preference_cap": 30,
   "disabled_repos": []

@@ -3,9 +3,9 @@
 // decision point get used more than ones buried at session start.
 // Aggressive floor (prompt_min_sim) + dedupe vs everything already injected this
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, adaptiveCut, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -31,21 +31,42 @@ try {
   const logGap = () => {
     if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return;
     try {
-      appendFileSync(join(VAULT, 'index', 'gaps.jsonl'), JSON.stringify({
+      const gapsPath = join(VAULT, 'index', 'gaps.jsonl');
+      appendFileSync(gapsPath, JSON.stringify({
         ts: new Date().toISOString(), repo: basename(hook.cwd || ''),
         novel: novel.slice(0, 8), rare: [...rare].slice(0, 8),
       }) + '\n');
+      // cheap probabilistic bound: trim to the most recent 2000 lines every ~100
+      // appends on average, instead of a full read on every single hot-path call.
+      // tmp+rename: a concurrent hook process's own appendFileSync can still land
+      // between this read and the rename (a lost-update race on this low-stakes
+      // telemetry log is an accepted residual), but the rename at least guarantees
+      // no reader ever observes a torn/partially-written file mid-trim.
+      if (Math.random() < 0.01) {
+        const lines = readFileSync(gapsPath, 'utf8').split('\n').filter(Boolean);
+        if (lines.length > 2000) {
+          const tmp = `${gapsPath}.tmp.${process.pid}`;
+          writeFileSync(tmp, lines.slice(-2000).join('\n') + '\n');
+          renameSync(tmp, gapsPath);
+        }
+      }
     } catch { }
   };
   if (rare.size < 2) {
     if (novel.length >= 3) logGap(); // technical prompt about something the vault knows nothing about
     process.exit(0);
   }
-  const top = scoreNotes(db, terms, k + seen.size)
-    .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim)
-    .filter(n => tokenize([n.title, n.entities, n.body].join(' ')).filter(w => rare.has(w)).length >= 2)
-    .slice(0, k);
-  if (!top.length) {
+  // trust:demo is excluded here too, not just at session-start: fictional seed
+  // content must never ride into a real session via a prompt-match either.
+  // Every candidate here passed the sim floor (no utility bypass on the prompt path),
+  // so adaptiveCut is safe; it is applied per polarity group so a pitfall is cut on its
+  // OWN cliff and never suppressed by higher-scoring guidance notes.
+  const passing = scoreNotes(db, terms, k + seen.size)
+    .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim && n.trust !== 'demo')
+    .filter(n => tokenize([n.title, n.entities, n.body, n.triggers].join(' ')).filter(w => rare.has(w)).length >= 2);
+  const guidanceTop = adaptiveCut(passing.filter(n => n.polarity !== 'pitfall'), k);
+  const pitfallTop = adaptiveCut(passing.filter(n => n.polarity === 'pitfall'), k);
+  if (!guidanceTop.length && !pitfallTop.length) {
     // the common, correct outcome. But rare terms that matched no note = a vault
     // gap: log it (unless the emptiness came from session dedupe). The gap list is
     // the evidence base for reflector tuning and the only honest embeddings trigger.
@@ -54,24 +75,42 @@ try {
   }
 
   // whole-note budget (a fraction of the session-start cap; the prompt path stays
-  // compact): drop a whole note rather than slicing one off mid-sentence.
+  // compact): drop a whole note rather than slicing one off mid-sentence. Guidance
+  // first, then pitfall notes in a separate "avoid these" block (Memento framing).
   const budget = Math.min(CONFIG.max_inject_chars, 6000);
   let out = 'Vault notes matching this prompt (cross-repo knowledge; verify against current code):\n';
   const injected = [];
-  for (const n of top) {
-    const flag = n.status === 'needs-review' ? ' [NEEDS REVIEW: underlying code changed]' : '';
-    const block = `\n## ${n.title}${flag}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
+  const flagOf = n => n.status === 'needs-review' ? ' [NEEDS REVIEW: underlying code changed]' : '';
+  for (const n of guidanceTop) {
+    const block = `\n## ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
     if (out.length + block.length > budget && injected.length) break;
     out += block;
     injected.push(n);
   }
+  let pitfallHeader = '\nKnown pitfalls, do NOT repeat:\n';
+  for (const n of pitfallTop) {
+    const block = `\n## AVOID: ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files})\n${n.body}\n`;
+    if (out.length + pitfallHeader.length + block.length > budget && injected.length) break;
+    if (pitfallHeader) { out += pitfallHeader; pitfallHeader = ''; }
+    out += block;
+    injected.push(n);
+  }
   if (!injected.length) process.exit(0);
-  process.stdout.write(out);
-
-  if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') process.exit(0); // eval reads memory, never mutates retrieval state
-  const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,0)');
-  const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
-  const today = new Date().toISOString().slice(0, 10);
-  injected.forEach((n, i) => { inj.run(sessionId, n.id, 100 + i, n.score); touch.run(today, n.id); }); // rank 100+ = per-prompt injection
-} catch (e) { hookDebugLog('retrieve-prompt', e); /* memory must never block a prompt */ }
-process.exit(0);
+  // process.exit() does not wait for an async pipe write to flush; on Windows a
+  // piped stdout write is async, so the DB bookkeeping (and the exit) runs inside
+  // the write's own callback instead of immediately after issuing it.
+  process.stdout.write(out, () => {
+    try {
+      if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return process.exit(0); // eval reads memory, never mutates retrieval state
+      const inj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo,sim,qv,rec,val) VALUES (?,?,?,?,0,?,?,?,?)');
+      const touch = db.prepare('UPDATE notes SET access_count=access_count+1, last_used=? WHERE id=?');
+      const today = new Date().toISOString().slice(0, 10);
+      // components (sim/qv/rec/val) feed offline weight-fitting via tune-weights.mjs
+      injected.forEach((n, i) => {
+        inj.run(sessionId, n.id, 100 + i, n.score, n.sim ?? null, n.q_value ?? null, n.recency ?? null, n.validity ?? null);
+        touch.run(today, n.id);
+      }); // rank 100+ = per-prompt injection
+    } catch (e) { hookDebugLog('retrieve-prompt', e); /* memory must never block a prompt */ }
+    process.exit(0);
+  });
+} catch (e) { hookDebugLog('retrieve-prompt', e); process.exit(0); /* memory must never block a prompt */ }

@@ -40,7 +40,7 @@ Defenses in order: the headless reflector and judge run with all tools denied an
 
 ## Scheduling the worker and the nightly job
 
-The worker (reflection + scoring) and the consolidator (the nightly "dream" job) are the only pieces that need a schedule. On macOS or Linux, two cron lines:
+The worker (reflection + scoring) and the consolidator (the nightly "dream" job) are the only pieces that need a schedule. On Windows, `node scripts/init.mjs` already auto-registers a daily 03:00 Scheduled Task named `UnifiedMemWorker` that runs both (via a generated `index/run-nightly.cmd`), so you do not have to set this up by hand; the lines below are for other platforms or a different cadence. On macOS or Linux, two cron lines:
 
 ```
 0 * * * * node /path/to/unified-mem/scripts/worker.mjs        # hourly: drain the queue
@@ -73,11 +73,11 @@ Only note files are tracked; the SQLite index, queue, and cost ledger are rebuil
 
 ## Windows notes
 
-Built and tested on Windows 11 (with Git Bash present). Hook commands use forward slashes and quoted absolute paths, which work across platforms. Task Scheduler equivalents of the cron lines above:
+Built and tested on Windows 11 (with Git Bash present). Hook commands use forward slashes and quoted absolute paths, which work across platforms. On Windows, `init.mjs` registers the `UnifiedMemWorker` daily task for you (see the scheduling question above). If you want to schedule the two jobs by hand instead, the Task Scheduler equivalents of the cron lines above (note the inner script path is quoted so it survives spaces in the checkout path, and `node` must be on the PATH of the account the task runs as, the interactive user by default):
 
 ```
-schtasks /Create /SC HOURLY /TN unified-mem-worker /TR "node C:\path\to\unified-mem\scripts\worker.mjs"
-schtasks /Create /SC DAILY /ST 03:00 /TN unified-mem-dream /TR "node C:\path\to\unified-mem\scripts\consolidate.mjs"
+schtasks /Create /SC HOURLY /TN unified-mem-worker /TR "node \"C:\path\to\unified-mem\scripts\worker.mjs\""
+schtasks /Create /SC DAILY /ST 03:00 /TN unified-mem-dream /TR "node \"C:\path\to\unified-mem\scripts\consolidate.mjs\""
 ```
 
 Run tests with plain `node --test` (auto-discovery): passing the directory as an argument misbehaves on Windows.

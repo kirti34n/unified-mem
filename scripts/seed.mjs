@@ -332,6 +332,19 @@ const DEMO_NOTE_IDS = Object.keys(DEMO_NOTES);
 const notePath = id => join(NOTES_DIR, id.slice(0, 4), id.slice(5, 7), `${id}.md`);
 
 const db = openDb();
+// Refuse to seed a vault that already has real notes: trust:demo keeps fictional
+// content out of session injection (see retrieve.mjs/retrieve-prompt.mjs), but
+// seeding a live vault still pollutes the dashboard and confuses anyone reading
+// the catalog. --force overrides for anyone who really wants a mixed vault.
+// This check MUST run before any mutation below (--purge-demo is exempt: it only
+// ever removes demo data, never writes it, so it stays safe on a mixed vault).
+if (!process.argv.includes('--purge-demo') && !process.argv.includes('--force')) {
+  const real = db.prepare("SELECT COUNT(*) c FROM notes WHERE trust != 'demo'").get().c;
+  if (real > 0) {
+    console.error(`refusing to seed: this vault already has ${real} real note(s). Run this only on a fresh vault (see scripts/init.mjs), or pass --force to seed anyway.`);
+    process.exit(1);
+  }
+}
 for (const t of ['sessions', 'injections', 'q_history', 'consolidations', 'metrics_daily'])
   db.exec(`DELETE FROM ${t} WHERE demo=1`);
 if (process.argv.includes('--purge-demo')) {
@@ -391,7 +404,9 @@ const SESSIONS = [
 ];
 
 const insSess = db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,1)');
-const insInj = db.prepare('INSERT INTO injections VALUES (?,?,?,?,1)');
+// explicit columns: the injections table gained sim/qv/rec/val, so a positional
+// VALUES list would break; demo rows leave those component columns null.
+const insInj = db.prepare('INSERT INTO injections (session_id,note_id,rank,score,demo) VALUES (?,?,?,?,1)');
 const insQ = db.prepare('INSERT INTO q_history VALUES (?,?,?,?,?,?,?,?,1)');
 const q = Object.fromEntries(DEMO_NOTE_IDS.map(id => [id, .5]));
 
