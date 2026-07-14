@@ -24,6 +24,10 @@ jobs:
         run: node --test
       - name: end-to-end smoke (temp vault)
         run: node scripts/smoke.mjs
+      # Retrieval precision, free and deterministic. Guards the failure the paid eval is blind to:
+      # memory firing when it should not. It went unmeasured once and regressed silently.
+      - name: retrieval precision (no LLM, no spend)
+        run: node eval/negatives.mjs
       - name: zero dependencies, forever
         run: |
           node -e "const p=require('./package.json');const d=Object.keys(p.dependencies||{});if(d.length){console.error('dependencies found:',d);process.exit(1)}"

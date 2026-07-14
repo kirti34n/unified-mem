@@ -6,7 +6,7 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { basename, join, dirname } from 'node:path';
-import { openDb, scoreNotes, adaptiveCut, tokenize, hookDebugLog, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, adaptiveCut, resolveSupersessions, tokenize, hookDebugLog, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -113,14 +113,21 @@ try {
   // silently drop the whole "do NOT repeat" block). adaptiveCut trims weak sim-matches
   // only; a note admitted for PROVEN utility (q>=0.7 but sim below the floor) is exempt
   // and always kept, so the cliff cut cannot cancel the deliberate utility bypass.
-  const passing = scoreNotes(db, query)
+  const passing = resolveSupersessions(db, scoreNotes(db, query))
     .filter(n => n.trust !== 'demo' && (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id) && n.type !== 'preference');
   const trim = notes => {
     const simMatched = notes.filter(n => n.sim >= CONFIG.start_min_sim);
     const bypass = notes.filter(n => n.sim < CONFIG.start_min_sim); // proven high-Q, low sim: always kept
     return [...adaptiveCut(simMatched, CONFIG.k), ...bypass];
   };
-  const flagOf = n => n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]' : '';
+  // redirected_from: the slot was won by a note the arbiter has since superseded; we served
+  // its replacement. A bare `superseded` flag only survives when the winner is gone, so it
+  // must still read as a warning rather than as ordinary guidance.
+  const flagOf = n =>
+    n.status === 'needs-review' ? ' [NEEDS REVIEW, the underlying code changed; verify before use]'
+      : n.status === 'superseded' ? ' [SUPERSEDED, its replacement is gone; verify before use]'
+        : n.redirected_from ? ` [replaces ${n.redirected_from}, which is now superseded]`
+          : '';
   const guidance = trim(passing.filter(n => n.polarity !== 'pitfall'));
   const pitfalls = trim(passing.filter(n => n.polarity === 'pitfall'));
   if (guidance.length) out += '\nMost relevant notes for this repo right now:\n';

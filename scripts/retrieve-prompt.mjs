@@ -5,7 +5,7 @@
 // session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync, writeFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, adaptiveCut, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, adaptiveCut, resolveSupersessions, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -17,7 +17,13 @@ try {
   const sessionId = hook.session_id || 'unknown';
   const seen = new Set(db.prepare('SELECT note_id FROM injections WHERE session_id=?')
     .all(sessionId).map(r => r.note_id));
-  const terms = tokenize(prompt + ' ' + basename(hook.cwd || '')).slice(0, 60); // cap: a pasted stack trace must not mean hundreds of DF queries
+  // Query is the PROMPT ONLY. The cwd basename must never enter it: its tokens feed
+  // the DF gate below, and a repo name is by construction frequent in that repo's own
+  // notes yet still under dfCap ("unified_mem" -> "unified" df=11, "mem" df=11, cap
+  // 14.7), so the folder name alone satisfied the >=2-rare-terms rule for EVERY prompt.
+  // That silently disabled the only precision gate on this path, in exactly the repos
+  // with the most notes ("what should we have for dinner" injected 2 notes).
+  const terms = tokenize(prompt).slice(0, 60); // cap: a pasted stack trace must not mean hundreds of DF queries
   const k = CONFIG.prompt_k;
   // Precision gate, frequency-aware: in a vault of fixes, words like "fix", "load",
   // "session" appear in most notes and carry zero signal. Only query terms present
@@ -26,7 +32,14 @@ try {
   const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
   const dfCap = Math.max(2, total * 0.3);
   const df = docFreq(db, terms); // FTS5 when available, else a notes-table scan (same gate on any Node)
-  const rare = new Set(terms.filter(t => df.get(t) > 0 && df.get(t) <= dfCap));   // present but discriminative: usable evidence
+  // The length floor mirrors the one `novel` already applies, and it is what makes the gate
+  // hold on ordinary English. Document frequency alone cannot: a short common word that
+  // happens to sit in only a couple of notes ("one", "blue", "day") looks exactly as
+  // "discriminative" as a real technical token, so two of them satisfy the >=2 rule and a
+  // chatty prompt injects. Measured on the live vault: 3 of 20 off-topic prompts leaked in
+  // every repo (15.0% of 300 negative probes) purely on short words. A term has to be both
+  // rare AND substantial to count as evidence.
+  const rare = new Set(terms.filter(t => t.length > 4 && df.get(t) > 0 && df.get(t) <= dfCap)); // rare AND substantial: usable evidence
   const novel = terms.filter(t => df.get(t) === 0 && t.length > 4);               // vault has never seen these: the strongest gap signal
   const logGap = () => {
     if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return;
@@ -61,7 +74,10 @@ try {
   // Every candidate here passed the sim floor (no utility bypass on the prompt path),
   // so adaptiveCut is safe; it is applied per polarity group so a pitfall is cut on its
   // OWN cliff and never suppressed by higher-scoring guidance notes.
-  const passing = scoreNotes(db, terms, k + seen.size)
+  // Supersede redirect runs BEFORE the seen-filter so a note already injected this session
+  // cannot be re-injected via its superseded alias, and before the rare-term filter so the
+  // WINNER's own text is what has to earn the slot.
+  const passing = resolveSupersessions(db, scoreNotes(db, terms, k + seen.size))
     .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim && n.trust !== 'demo')
     .filter(n => tokenize([n.title, n.entities, n.body, n.triggers].join(' ')).filter(w => rare.has(w)).length >= 2);
   const guidanceTop = adaptiveCut(passing.filter(n => n.polarity !== 'pitfall'), k);
@@ -80,7 +96,15 @@ try {
   const budget = Math.min(CONFIG.max_inject_chars, 6000);
   let out = 'Vault notes matching this prompt (cross-repo knowledge; verify against current code):\n';
   const injected = [];
-  const flagOf = n => n.status === 'needs-review' ? ' [NEEDS REVIEW: underlying code changed]' : '';
+  // redirected_from: this slot was won by a note the arbiter has since superseded; we served
+  // the replacement instead. Said out loud because the agent may have seen the old note before.
+  // A bare `superseded` flag only survives when the winner is gone (resolveSupersessions kept
+  // the loser rather than drop the sole answer), so it must still read as a warning.
+  const flagOf = n =>
+    n.status === 'needs-review' ? ' [NEEDS REVIEW: underlying code changed]'
+      : n.status === 'superseded' ? ' [SUPERSEDED, its replacement is gone: verify before use]'
+        : n.redirected_from ? ` [replaces ${n.redirected_from}, which is now superseded]`
+          : '';
   for (const n of guidanceTop) {
     const block = `\n## ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
     if (out.length + block.length > budget && injected.length) break;

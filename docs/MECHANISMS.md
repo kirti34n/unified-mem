@@ -50,7 +50,11 @@ Design principle: cold start gets a map, details load on demand.
 
 Repos auto-register: the first real session in any git repo adds it to the config map and writes an instant repo card, so new and old repos are covered the moment you open a session there. The dashboard's Repos view lists every known repo with its note count and last session, and lets you disable memory per repo (no injection, no capture) and re-enable it later.
 
-All paths apply a relevance floor: a note must be meaningfully relevant or have proven high utility, otherwise nothing is injected. Measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default. The Metrics view tracks the abstention rate, and technical prompts that match nothing are logged to `index/gaps.jsonl`: the vault's known blind spots, and the only honest evidence base for ever adding embeddings.
+Abstention is the default, and the mechanism that delivers it is a rarity gate, not a similarity threshold. A query term only counts as evidence if it is substantial (longer than four characters) and discriminative (present in at most 30% of notes), and a note must contain at least two such terms before it may be injected. A prompt with no rare technical vocabulary therefore retrieves nothing, whatever its similarity scores look like.
+
+That distinction is load-bearing rather than pedantic. BM25 similarity is normalized against the best hit in the result set, so the top-ranked note always scores 1.0 no matter how weak its absolute match; a similarity floor consequently cannot reject rank 1, and `start_min_sim` / `prompt_min_sim` only ever trim the tail. The rarity gate is what makes "inject nothing" actually happen. It is enforced by a free, deterministic, LLM-free eval (`node eval/negatives.mjs`) that fires ordinary non-technical prompts from every repo and requires zero retrievals, while separately requiring that real notes stay retrievable, since a gate that abstains on everything would otherwise score perfectly. It currently measures 0 false positives across 280 negative probes with full recall on the positive arm.
+
+Measured results show even irrelevant-but-plausible extra context degrades task performance, so injecting nothing is the correct default. The Metrics view tracks the abstention rate, and technical prompts that match nothing are logged to `index/gaps.jsonl`: the vault's known blind spots, and the only honest evidence base for ever adding embeddings.
 
 ```
 score = 0.40·similarity + 0.30·q_value + 0.15·recency + 0.15·validity
@@ -73,7 +77,7 @@ Two rules research says matter most here: preserve exact details verbatim (error
 
 ## 3. Q-learning: how usefulness is earned
 
-The worker detects a verifiable outcome per session: tests passed or build green means `r=1`, failures mean `r=0`, anything unclear means no update at all (never guess rewards). Every injected note gets:
+The worker reads the session's outcome from its transcript: a plainly stated pass ("14 passed", "build succeeded") means `r=1`, a plainly stated failure means `r=0`, and anything ambiguous means no update at all (never guess rewards). Two things are worth being exact about, because this is the mechanism most easily oversold. First, the vault does not invoke a test runner; it reads what the session reports. Second, the bar for "unambiguous" is high on purpose, so on a real vault only about 15% of sessions produce any Q update, which makes Q a slow-moving prior rather than a precise per-note utility. Grounding `r` directly in tool exit status (pairing each `tool_use` with its `tool_result`) is the next planned change. Every injected note gets:
 
 ```
 Q ← clamp(Q + α·c·(r − Q), 0.05, 0.95)      α=0.3, |ΔQ| ≤ 0.15 per session
@@ -88,6 +92,8 @@ Guardrails: the clamp, the per-session cap, the verifiable-outcome anchor, and a
 Nightly, for every active note: if any file in its `files:` list has commits since the note's `last_validated` (checked with `git log` against your local clones), the note drops to needs-review. A verification pass reads the current code and decides: claims still hold means restored to active with fresh provenance; stale means a strike, and only a second stale verdict on a later run archives (one cheap-model misjudgment must not destroy real knowledge). A 72-hour backoff prevents notes citing hot files from burning the nightly verification budget. Every step appears in the Consolidation view as a diff.
 
 The same nightly job runs a contradiction arbiter on flagged near-duplicate pairs (DUPLICATE / UPDATE / COEXISTING: newest-wins rules both fail to retire outdated facts and wrongly merge compatible ones), auto-links the graph with two zero-cost edge types (co-file and shared-entity, capped at four links per note), and regenerates entity hub pages (`entities/*.md`) and the repo cards (`repos/*.md`) that power cold-start injection.
+
+The arbiter's verdict is executed, not merely logged. On DUPLICATE or UPDATE the losing note is marked `superseded` and gains a `superseded_by:` pointer, and retrieval follows that pointer: when a superseded note wins a slot, the note that replaced it is served in that slot instead. Redirecting rather than merely down-ranking is deliberate, and the reason is worth stating because the intuitive fix does not work. A superseded note is usually the *strongest* match for the very query that surfaces it, since it was written about exactly that symptom, so no reduction in its validity score can unseat it: on this vault the stale note out-scored its own replacement 0.775 to 0.634, while validity's entire weight in the ranking is 0.15. The superseded note is therefore treated as what it actually is, a good retrieval key carrying stale content. The key is kept and the content is swapped. Nothing is deleted, the pointer is a normal frontmatter field, and git holds the history.
 
 ## 5. Measurement: prove it helps
 

@@ -2,45 +2,24 @@
 // (claude -p distills transcript into 0-5 typed notes) → reindex.
 // Run manually, from cron, or `node scripts/worker.mjs --watch` to poll every 60s.
 // Flags: --model <m> override reflector model · --no-reflect (scorer only, no LLM).
-import { readFileSync, readdirSync, unlinkSync, writeFileSync, mkdirSync, existsSync, renameSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, unlinkSync, writeFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { userInfo, hostname } from 'node:os';
-import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, validateNote, duplicateFrontmatterKey, detectOutcome, runClaude, CONFIG, ROOT, VAULT, NOTES_DIR, SECRET_RE } from './vault.mjs';
+import { openDb, reindexNotes, scoreNotes, tokenize, updateNoteFile, parseNote, validateNote, duplicateFrontmatterKey, detectOutcome, buildTranscripts, runClaude, CONFIG, ROOT, VAULT, NOTES_DIR, SECRET_RE, looksLikePromptInjection } from './vault.mjs';
 
 const argv = process.argv.slice(2);
 const MODEL = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : CONFIG.reflector_model;
 const REFLECT = !argv.includes('--no-reflect');
 const QUEUE = join(VAULT, 'queue');
 
-// Extract readable text from a Claude Code transcript (.jsonl). Caps size.
-// Every physical line of a multi-line message gets its own [role]-prefixed line
-// (not one prefix on the whole block): scoreSession's contribution matcher filters
-// on lines starting "[assistant]", and a single prefix on a multi-paragraph message
-// would silently hide every line after the first from Q-update scoring.
-function transcriptText(path, maxChars = 60_000) {
-  if (!path || !existsSync(path)) return '';
-  const out = [];
-  const pushRole = (role, text) => { for (const l of String(text).split('\n')) out.push(`[${role}] ${l}`); };
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    try {
-      const j = JSON.parse(line);
-      const msg = j.message ?? j;
-      const role = msg.role || j.type || '';
-      const content = msg.content;
-      if (typeof content === 'string') pushRole(role, content);
-      else if (Array.isArray(content)) for (const c of content) {
-        if (c.type === 'text') pushRole(role, c.text);
-        if (c.type === 'tool_result' && typeof c.content === 'string') out.push(`[tool] ${c.content.slice(0, 400)}`);
-      }
-    } catch { /* skip non-JSON lines */ }
-  }
-  const full = out.join('\n');
-  return full.length > maxChars ? full.slice(0, maxChars / 2) + '\n[...truncated...]\n' + full.slice(-maxChars / 2) : full;
-}
-
-// detectOutcome and validateNote live in vault.mjs so they are unit-testable
-// (this file runs the drain on import and cannot be imported by tests).
+// buildTranscripts, detectOutcome and validateNote live in vault.mjs so they are unit-testable
+// (this file runs the drain on import and cannot be imported by tests). buildTranscripts returns
+// BOTH projections of one session from a single read: .lean (prose only, byte-for-byte what this
+// worker has always built, and the ONLY string the reward path may see) and .enriched (the same
+// prose plus the commands that ran and the code the edits installed, for the reflector). Keeping
+// the two apart is what lets capture get richer without silently re-labelling past outcomes. The
+// full rationale, and the measurements behind the clip sizes, are on buildTranscripts.
 
 // Pinned contribution judge (coarse rubric, one cheap call per determinate session).
 // Model and prompt are PINNED via config: changing them makes Q scores incomparable
@@ -158,6 +137,13 @@ thresholds, flags, and commands exactly as they appeared. Never paraphrase a num
 an error message, or a qualifier ("only on Windows", "above 2s p99"). Dropping
 specifics during distillation is the #1 measured failure mode of memory systems.
 
+The transcript is line-tagged. "[user]" and "[assistant]" are prose. "[tool]" is a tool result,
+clipped in the middle, so "[...N chars elided...]" marks output removed between its head and its
+tail. "[call:Bash]" and "[call:PowerShell]" lines are the exact commands that ran. "[call:Edit]"
+gives the file path, and the "[call:Edit] + " lines are the literal code that edit installed.
+When a note's fix IS a command or an edit, quote the "[call:...]" text; do not paraphrase the
+assistant's description of what it did.
+
 Output format, for EACH note emit exactly this block (no other prose):
 <<<NOTE
 ---
@@ -226,11 +212,20 @@ const collapseSecurityNeutralDuplicates = text => {
   return text;
 };
 
-function reflect(db, entry, text) {
+function reflect(db, entry, enriched) {
   const git = cmd => { try { return spawnSync(cmd, { cwd: entry.cwd, shell: true, encoding: 'utf8' }).stdout || ''; } catch { return ''; } };
-  const nearest = scoreNotes(db, tokenize(text.slice(0, 4000)), 10)
+  // The "EXISTING NOTES, do not duplicate" context is built from PROSE ONLY. Strip the [call:]
+  // lines FIRST and slice after: slicing first would spend the 4k window on tool calls and then
+  // delete them, leaving far less than 4k of real prose to match on. tokenize() splits an escaped
+  // Windows path into its segments (users, kirti, music, scripts, ...), which are among the
+  // highest-df terms in this vault, so leaving the call lines in would retrieve the same handful
+  // of unified-mem notes as "nearest" no matter what the session was actually about, and the
+  // do-not-duplicate list would stop describing this session. Measured on the real transcripts,
+  // [call:] lines are up to 30.1% of this window (p90 6.2%).
+  const prose = enriched.split('\n').filter(l => !l.startsWith('[call:')).join('\n');
+  const nearest = scoreNotes(db, tokenize(prose.slice(0, 4000)), 10)
     .map(n => `- ${n.id}: ${n.title}`).join('\n') || '(none)';
-  const prompt = REFLECT_PROMPT(text, git('git log -5 --format="%h %s"'), nearest);
+  const prompt = REFLECT_PROMPT(enriched, git('git log -5 --format="%h %s"'), nearest);
   // Reflection ALWAYS uses the session-grade CLI model (reflector_model, sonnet
   // by default): the notes it writes become context for future sessions, so no
   // downgrade routing. All pipeline calls go through the Claude CLI; nothing local.
@@ -264,6 +259,19 @@ function reflect(db, entry, text) {
     const dupKey = duplicateFrontmatterKey(note);
     if (dupKey) { console.error(`dropped ${id}: duplicate frontmatter key '${dupKey}' (poisoning attempt)`); continue; }
     if (SECRET_RE.test(note)) { console.error(`dropped ${id}: secret pattern detected`); continue; }
+    // Prompt-injection reject. Runs on the FULL note text, frontmatter included, exactly like the
+    // secret check above: `title:` and `triggers:` are natural-language fields that ride into the
+    // injected block just as the body does, so gating only the body would leave unguarded the two
+    // fields an attacker would most want. A note is text this system pushes UNASKED into a future
+    // session, so a poisoned transcript (the agent read a hostile README, issue, or web page) must
+    // not be able to distill itself into a permanent, auto-replayed instruction.
+    //
+    // Reflector output ONLY. Notes the user writes by hand (rememberNote, a direct file edit, an
+    // existing file picked up by reindexNotes) are trusted and deliberately not filtered: the
+    // untrusted path is the LLM distilling a transcript it did not author. That asymmetry is also
+    // the escape hatch that leaves it possible to hand-author a note documenting these very
+    // patterns, which this filter would otherwise reject as an attack.
+    if (looksLikePromptInjection(note)) { console.error(`dropped ${id}: prompt-injection pattern detected`); continue; }
     if (db.prepare('SELECT 1 FROM notes WHERE id=?').get(id)) continue;
     // provenance is stamped by the worker, never trusted from LLM output (poisoning defense)
     const prov = `author: ${userInfo().username}\nmachine: ${hostname()}\nsource_session: ${entry.session_id}\ntrust: local\n`;
@@ -325,9 +333,13 @@ function drain() {
       try { entry = JSON.parse(readFileSync(claimed, 'utf8')); }
       catch { try { unlinkSync(claimed); } catch { } continue; }
       console.log(`processing ${basename(f)} (cwd: ${entry.cwd || '?'})`);
-      const text = transcriptText(entry.transcript_path);
-      const outcome = text ? detectOutcome(text) : 'indeterminate';
-      const scored = scoreSession(db, entry.session_id, outcome, text, basename(entry.cwd || 'unknown'));
+      // lean drives the REWARD channel and nothing else touches it, so every historical Q value
+      // stays comparable. enriched drives the reflector and nothing else. Never cross these wires:
+      // feeding enriched to detectOutcome re-weights its fixed 8k tail window and, measured over
+      // the 321 real transcripts, silently re-labels 11 sessions.
+      const { lean, enriched } = buildTranscripts(entry.transcript_path);
+      const outcome = lean ? detectOutcome(lean) : 'indeterminate';
+      const scored = scoreSession(db, entry.session_id, outcome, lean, basename(entry.cwd || 'unknown'));
       console.log(`  outcome: ${outcome} · Q updates: ${scored}`);
       // gates: tiny transcripts hold nothing durable, and one drain must not turn a
       // backfill dump into an unbounded run of reflector calls
@@ -342,12 +354,17 @@ function drain() {
       const cooldownMs = (CONFIG.reflect_cooldown_min ?? 20) * 60_000;
       const lastReflect = db.prepare("SELECT MAX(ts) t FROM q_history WHERE session_id=? AND op='reflect'").get(entry.session_id).t;
       const inCooldown = lastReflect && (Date.now() - new Date(lastReflect).getTime()) < cooldownMs;
-      if (REFLECT && text.length > 4000 && !inCooldown) {
+      // Gate on LEAN, deliberately, even though the reflector is handed enriched. Gating on the
+      // enriched length would newly admit 13 of the 321 real sessions, and 5 of those 13 have zero
+      // Bash and zero Edit/Write: they clear the bar purely on [call:Read] path filler, which is
+      // spelunking, not durable knowledge. D6 changes WHAT the reflector sees, not how often it
+      // runs, so reflection volume and spend do not move.
+      if (REFLECT && lean.length > 4000 && !inCooldown) {
         if (reflections >= CONFIG.max_reflections_per_run) {
           console.warn(`  reflection cap (${CONFIG.max_reflections_per_run}/run) reached, leaving queued`);
           release(); continue;
         }
-        written = reflect(db, entry, text);
+        written = reflect(db, entry, enriched);
         if (written === null) { // budget cap or CLI failure (missing/not logged in/timeout): KEEP the transcript
           console.warn('  reflection call failed (budget cap or CLI error), leaving queued for next run');
           release(); continue;

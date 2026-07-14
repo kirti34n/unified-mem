@@ -122,6 +122,19 @@ r = run(['scripts/retrieve-prompt.mjs'], JSON.stringify({
 }));
 if (r.stdout.trim() !== '') fail('chatty prompt must inject nothing', r);
 
+// Same abstention, but from INSIDE the repo the notes belong to. The check above
+// cannot catch a cwd leak: tmpdir()'s basename matches no note, so the query is
+// effectively prompt-only there whether or not the cwd is mixed in. Here the cwd
+// basename IS the fixture repo, so if it ever re-enters the query it supplies its own
+// rare terms ("smoke", "repo"), every fixture note contains both, and the DF gate
+// passes on any prompt at all. That is the bug this pins: the precision gate must be
+// driven by the prompt alone, and must therefore stay dead in the notes' own repo.
+r = run(['scripts/retrieve-prompt.mjs'], JSON.stringify({
+  session_id: 'smoke-p3', cwd: join(tmpdir(), 'smoke-repo'),
+  prompt: 'what should we have for dinner tonight, any thoughts on that?',
+}));
+if (r.stdout.trim() !== '') fail('off-topic prompt must inject nothing even inside the notes\' own repo (cwd must not enter the query)', r);
+
 // A REAL preference through the real capture path, then a capture-enabled
 // retrieve that must both pin it and log injection rows: Q-learning, dedupe,
 // decay, and the dashboard all depend on that table being written.
@@ -137,4 +150,4 @@ r = run(['-e',
 if (r.status !== 0) fail('capture path must log injections', r);
 
 rmSync(vault, { recursive: true, force: true });
-console.log('SMOKE OK: seed, demo-only injects nothing, catalog excludes demo repos, demo trust gate (pin + sim/bypass), real-note relevant injection, pitfall AVOID block, chatty abstention, pinning, capture logging');
+console.log('SMOKE OK: seed, demo-only injects nothing, catalog excludes demo repos, demo trust gate (pin + sim/bypass), real-note relevant injection, pitfall AVOID block, chatty abstention, in-repo off-topic abstention (cwd not in query), pinning, capture logging');

@@ -108,6 +108,7 @@ export function openDb() {
   try { db.exec("ALTER TABLE notes ADD COLUMN trust TEXT DEFAULT 'unknown'"); } catch { } // trust gates pinning + utility bypass
   try { db.exec("ALTER TABLE notes ADD COLUMN triggers TEXT DEFAULT ''"); } catch { } // situation phrases, optional
   try { db.exec("ALTER TABLE notes ADD COLUMN polarity TEXT DEFAULT 'guidance'"); } catch { } // guidance vs pitfall (negative-example framing)
+  try { db.exec("ALTER TABLE notes ADD COLUMN superseded_by TEXT DEFAULT ''"); } catch { } // set by the dedupe arbiter; named in the injected block so a demoted note can't mislead
   // injection component scores (for offline weight-fitting via tune-weights.mjs)
   for (const c of ['sim', 'qv', 'rec', 'val'])
     try { db.exec(`ALTER TABLE injections ADD COLUMN ${c} REAL`); } catch { }
@@ -178,8 +179,8 @@ export function reindexNotes(db) {
     .map(r => [r.id, r]));
   const up = db.prepare(`INSERT OR REPLACE INTO notes
     (id,title,type,status,confidence,q_value,repos,entities,files,links,
-     source_commit,created,last_used,last_validated,access_count,body,path,scope,trust,triggers,polarity)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     source_commit,created,last_used,last_validated,access_count,body,path,scope,trust,triggers,polarity,superseded_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const seen = [];
   let n = 0;
   const ID_RE = /^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/;
@@ -234,7 +235,8 @@ export function reindexNotes(db) {
       note.confidence ?? 'med', q, csv(note.repos),
       csv(note.entities), csv(note.files), csv(note.links), note.source_commit ?? '',
       note.id.slice(0, 10), note.last_used ?? was?.last_used ?? null, note.last_validated ?? null,
-      access, note.body ?? '', p, note.scope ?? 'shared', trust, phraseCsv(note.triggers), polarity);
+      access, note.body ?? '', p, note.scope ?? 'shared', trust, phraseCsv(note.triggers), polarity,
+      note.superseded_by ?? '');
     seen.push(note.id);
     n++;
   }
@@ -280,7 +282,13 @@ const STOP = new Set(('the and for with that this have what was are you our all 
 export const tokenize = s =>
   [...new Set(String(s).toLowerCase().split(/[^a-z0-9@]+/).filter(w => w.length > 2 && !STOP.has(w)))];
 
-const VALIDITY = { active: 1.0, 'needs-review': 0.4, archived: 0 };
+// superseded: the arbiter judged another note to have replaced this one. Demoted, not
+// deleted (0.2 costs ~0.12 of score, far more than any plausible Q edge), because a
+// single cheap-model verdict must never destroy real knowledge: same reasoning as the
+// two-strike rule on stale-verification. Git is the undo. The note stays retrievable
+// and stays FTS-indexed, so if it is still the best answer to something it can win,
+// but it can no longer outrank the note that corrected it.
+const VALIDITY = { active: 1.0, 'needs-review': 0.4, superseded: 0.2, archived: 0 };
 
 // bm25() weight args map positionally to notes_fts's full column list, INCLUDING the
 // UNINDEXED id column (verified empirically: a 0 there is inert, it just keeps the
@@ -337,6 +345,41 @@ export function scoreNotes(db, queryTerms, k = CONFIG.k, now = new Date()) {
   }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, k);
 }
 
+// Follow supersede pointers on a ranked list: serve the WINNER's content in the loser's slot.
+//
+// Demotion alone provably cannot fix this. The superseded note is usually the strongest
+// lexical match for the very query that surfaces it (it was written about exactly that
+// symptom), so it keeps rank 1 on similarity no matter what validity says: measured on the
+// live vault, the stale render-script note scores 0.775 against its own replacement's 0.634,
+// and validity's ENTIRE normalized weight is 0.15, so even validity=0 only reaches 0.745.
+// Demoting it harder would just make retrieval worse without ever flipping the pair.
+//
+// So treat the loser as what it actually is: a good retrieval KEY carrying stale CONTENT.
+// Keep the key, swap the content. The winner inherits the loser's score (it earned that slot)
+// and is marked `redirected_from` so the caller can be honest about what happened. If the
+// winner is gone or archived, keep the loser: a flagged stale note beats silently dropping
+// the only answer we have.
+export function resolveSupersessions(db, notes, maxHops = 4) {
+  const out = [], byId = new Map();
+  for (const n of notes) {
+    let cur = n, hops = 0;
+    const chain = new Set([n.id]); // cycle guard: a mutual supersede pair must not loop
+    while (cur.status === 'superseded' && cur.superseded_by && hops++ < maxHops) {
+      const next = db.prepare('SELECT * FROM notes WHERE id=?').get(cur.superseded_by);
+      if (!next || next.status === 'archived' || chain.has(next.id)) break;
+      chain.add(next.id);
+      cur = { ...next, score: n.score, sim: n.sim, recency: n.recency, validity: n.validity, redirected_from: cur.id };
+    }
+    // dedupe: the winner may already be on the list on its own merit (near-duplicates match
+    // the same query), in which case the redirect collapses into it rather than doubling it.
+    const seen = byId.get(cur.id);
+    if (seen) { if (cur.score > seen.score) Object.assign(seen, cur); continue; }
+    byId.set(cur.id, cur);
+    out.push(cur);
+  }
+  return out;
+}
+
 // Adaptive-k: cut a scored, descending-sorted list at its largest RELATIVE score drop
 // instead of always padding to k. A clear "cliff" means the notes past it are much
 // weaker and only dilute attention (and pick up unfair r=0 judgments); when scores
@@ -383,7 +426,7 @@ export function updateNoteFile(db, id, changes) {
   const tmp = `${row.path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
   writeFileSync(tmp, after);
   renameSync(tmp, row.path);
-  const cols = ['status', 'q_value', 'last_used', 'last_validated', 'access_count', 'confidence'];
+  const cols = ['status', 'q_value', 'last_used', 'last_validated', 'access_count', 'confidence', 'superseded_by'];
   for (const [key, val] of Object.entries(changes))
     if (cols.includes(key)) db.prepare(`UPDATE notes SET ${key}=? WHERE id=?`).run(val, id);
   return makeDiff(row.path, before, after);
@@ -400,7 +443,82 @@ export function makeDiff(path, before, after) {
   return out.length > 2 ? out.join('\n') : null;
 }
 
-export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
+// Notes are git-committed and pushed, so a secret that reaches a note body is a secret that
+// reaches the remote. The original list caught OpenAI, AWS, classic-GitHub and Slack keys plus
+// an inline `password=`, and missed the four shapes a 2026 transcript actually carries: Google
+// keys (AIza), JWTs (the `eyJ` header is base64 for `{"`), bearer tokens, and DB URLs with
+// inline credentials. gh[pousr]_ generalizes the ghp_-only branch to the whole GitHub token
+// family, and github_pat_ covers the fine-grained tokens that replaced it.
+//
+// Each new branch is bounded so it cannot eat legitimate note content: the credentialed-URL
+// branch requires a full user:pass@host triple with a secret of 6+ chars, so
+// `postgres://localhost:5432/app` and `https://github.com/kirti34n/unified-mem` stay clean;
+// the bearer branch requires 24+ token characters, so `Authorization: Bearer $TOKEN` (a
+// placeholder worth keeping in a note) survives. Measured on the live corpus: 12 of 12 secret
+// shapes caught, 0 false positives across all 55 notes plus every entity hub, repo card,
+// README and PLAN.
+export const SECRET_RE = /(sk-[a-zA-Z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{22,}|xox[baprs]-[a-zA-Z0-9-]+|AIza[0-9A-Za-z_-]{35}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|\bbearer\s+[a-zA-Z0-9._~+/-]{24,}={0,2}|\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s:@/]{6,}@[^\s/]+|password\s*[:=]\s*\S+|api[_-]?key\s*[:=]\s*['"][^'"]{12,})/i;
+
+// Prompt-injection reject filter for the memory boundary (ported from TencentDB-Agent-Memory's
+// looksLikePromptInjection, src/utils/sanitize.ts:180-221). Their framing is exactly right: a
+// note is not passive data, it is text this system PUSHES into a future session's context
+// unasked, so the vault is a stored-XSS surface. A transcript can be poisoned by anything the
+// agent merely READ (a hostile README, an issue body, a web page), the reflector distills that
+// into a note, and the note is replayed into every future session it matches. The existing gates
+// do not cover this: validateNote checks SHAPE, the reflector type allow-list stops a poisoned
+// note becoming a pinned preference, and duplicateFrontmatterKey stops Q/trust poisoning, but
+// none of them read the note's prose.
+//
+// Deliberately NOT a faithful port. Three of their patterns are false-positive mines in a vault
+// whose whole subject is running commands, and a false positive here silently destroys a note
+// the user already paid a sonnet call to produce:
+//   1. their /\b(run|execute|call|invoke)\b.{0,40}\b(tool|command|function|shell)\b/ fires on 2
+//      of the 55 real notes in this vault ("Run the project's health-check command", "run every
+//      documented command"). Dropped outright: a ~4% destruction rate for near-zero security
+//      value, since "run the command" IS the knowledge this vault exists to store.
+//   2. their bare `ignore .{0,30} (instructions|rules)` rejects "Do not ignore the lint rules"
+//      and `forget .{0,30} context` rejects "Forget the old context manager pattern". Tightened
+//      to require an AUTHORITY qualifier (previous/prior/above/all/your) between the verb and
+//      its object, which is what separates an override attempt from ordinary technical English.
+//   3. their tag list includes `tool` and `function`, which collide with `Array<function>` and a
+//      note about an XML `<tool>` element. Narrowed to the boundary tags that can actually break
+//      out of a pushed context block, and anchored on a closing '>'.
+// Measured: 0 false positives across 215 real technical docs (55 notes, 148 entity hubs, repo
+// cards, README, PLAN), 16 of 16 known attack strings caught, 0 of 16 benign coding sentences
+// rejected.
+const INJECTION_RE = [
+  // instruction override: the verb alone is ordinary English, the authority qualifier is not
+  /\b(ignore|disregard|forget)\b[^.]{0,30}\b(previous|prior|above|earlier|all|any|your)\b[^.]{0,20}\b(instruction|rule|guideline|context|prompt)s?\b/i,
+  /\boverride\b[^.]{0,30}\b(previous|prior|above|all|your|safety|system)\b[^.]{0,20}\b(instruction|rule|guideline|prompt)s?\b/i,
+  // role hijack. The lookahead keeps the ordinary continuations a note might use
+  // ("you are now able to run the tests offline") out of the net.
+  /\byou are now\b(?! going| about| ready| able)/i,
+  /\bact as\b[^.]{0,20}\b(root|admin|dan|unrestricted|unfiltered|jailbroken)\b/i,
+  /\b(enter|switch to|activate)\b[^.]{0,20}\b(dan|jailbreak|god|sudo|developer|debug|unrestricted|unfiltered)\s+mode\b/i,
+  // system-boundary probing
+  /\b(show|reveal|print|output|display|repeat|leak|dump|give)\b[^.]{0,20}\b(me\s+)?(your|the)\s+system prompt\b/i,
+  /\breveal\b[^.]{0,20}\b(your|the)\s*(system|hidden|secret|internal)\s+(prompt|instruction|rule)s?\b/i,
+  /\bwhat (are|is)\b[^.]{0,20}\byour\s+(system|hidden|original|initial)\s+(prompt|instruction|rule)s?\b/i,
+  // context-boundary breakout: a note body carrying one of these closes the block it is
+  // rendered inside, and everything after it reads to the model as host-level framing rather
+  // than as note content.
+  /<\s*\/?\s*(system|assistant|human|developer|system-reminder|relevant-memories)\s*>/i,
+  // Chinese variants, kept from the source: an English-only filter is one any attacker bypasses
+  // by switching language, and none of these collide with code or technical prose.
+  /忽略(?:所有|之前|以上|先前)?(?:的)?(?:指令|规则|指示|说明)/,
+  /无视(?:所有|之前|以上)?(?:的)?(?:指令|规则|限制)/,
+  /(?:显示|输出|告诉我|给我看)(?:你的)?(?:系统|初始|隐藏)?(?:提示词|指令|规则)/,
+  /你(?:现在|从现在开始)是/,
+];
+// Whitespace is normalized first so padding and newlines between keywords cannot split a phrase
+// the patterns match ("ignore  all\n previous   instructions"). The bounded [^.] gaps keep every
+// match inside a single sentence, so two innocent adjacent sentences cannot be stitched into a
+// false hit across the full stop between them.
+export function looksLikePromptInjection(text) {
+  const normalized = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  return INJECTION_RE.some(re => re.test(normalized));
+}
 
 // Hooks swallow every error by design (memory must never block a session).
 // UNIFIED_MEM_DEBUG=1 is the escape hatch: failures land in hook-errors.jsonl.
@@ -455,6 +573,95 @@ export function detectOutcome(text) {
     && !/[1-9]\d* (failed|failing)/i.test(tail)) return 'success';
   if (/([1-9]\d* (failed|failing)|build failed|tests? fail|FATAL|unhandled exception)/i.test(tail)) return 'failure';
   return 'indeterminate';
+}
+
+// Transcript projection (D6). ONE pass over the .jsonl yields TWO strings, and the split is
+// load-bearing, not tidiness:
+//   .lean     prose only, byte-for-byte what worker.mjs has always built. The ONLY string the
+//             reward path (detectOutcome + scoreSession) is ever allowed to see.
+//   .enriched the same prose PLUS the commands that ran and the code the edits installed.
+//             Handed ONLY to the reflector.
+// They cannot be one string. detectOutcome reads a fixed text.slice(-8000) window and
+// scoreSession's Q update keys off its verdict, so enriching that input re-weights the window:
+// measured over the 321 real transcripts, feeding the enriched text to detectOutcome silently
+// re-labels 11 sessions (7 indeterminate to success, 2 success to indeterminate, 1 success to
+// failure, 1 indeterminate to failure). Q is cumulative and irreversible, and the same pinning
+// argument the contribution judge already makes (change the input and the scores stop being
+// comparable across time) applies here. So capture gets richer for the reflector while the
+// reward channel does not move a single byte.
+//
+// Why every physical line carries its own tag, tool_use lines included: scoreSession's
+// contribution matcher filters on lines starting "[assistant]", so one prefix on a multi-line
+// message would hide every line after the first from Q scoring. The call lines need the same
+// treatment for a different reason: reflect() strips them from its dedup query with a
+// startsWith('[call:') filter, and a bare continuation line (a multi-line PowerShell heredoc,
+// an edit hunk) would slip through and put escaped Windows paths back into that query.
+const CALL_CMD_MAX = 1200; // Bash p90 1098, PowerShell p90 775: for a command the head carries the executable and the flags.
+const CALL_NEW_MAX = 2000; // Edit new_string p90 1626: the fix IS the whole hunk, so it gets the bigger budget.
+const clipHead = (s, n) => s.length > n ? s.slice(0, n) + `\n[...+${s.length - n} chars]` : s;
+// Middle-out, NOT head-only. A stack trace's head is framework frames and a test run's head is
+// collection output: the assertion and the exit status are at the TAIL. Measured, head-400 keeps
+// 20.3% of tool_result bytes and keeps the wrong half; head-300 plus tail-500 keeps 29.7% and
+// keeps both ends.
+const clipEnds = (s, head, tail) => s.length > head + tail
+  ? s.slice(0, head) + `\n[...${s.length - head - tail} chars elided...]\n` + s.slice(-tail) : s;
+
+// Field-aware ALLOW-LIST, by tool name and by field. Deliberately NOT JSON.stringify(input):
+// (a) measured, the "new_string" key begins at or after char 300 in 55.3% of real Edit calls
+// (median offset 324), so a head slice of the serialized input keeps old_string, the BROKEN
+// code, and truncates away the fix, which is the one thing a recovery note exists to record;
+// (b) Write carries the entire file in input.content, so it contributes a path and nothing else;
+// (c) an unknown tool (Agent, WebFetch, AskUserQuestion) would splice attacker-reachable free
+// text straight into the reflector prompt, so unknown tools emit nothing at all.
+function toolUseLines(c) {
+  const i = c.input || {};
+  switch (c.name) {
+    case 'Bash': case 'PowerShell':
+      return i.command ? [[`call:${c.name}`, clipHead(String(i.command), CALL_CMD_MAX)]] : [];
+    case 'Edit': {
+      const out = [];
+      if (i.file_path) out.push(['call:Edit', String(i.file_path)]);
+      // "+ " marks the installed code, so the reflector can tell the path line from the hunk and
+      // quote the fix verbatim instead of paraphrasing the assistant's narration of it.
+      if (i.new_string) out.push(['call:Edit',
+        clipHead(String(i.new_string), CALL_NEW_MAX).split('\n').map(l => `+ ${l}`).join('\n')]);
+      return out;
+    }
+    case 'Write': return i.file_path ? [['call:Write', String(i.file_path)]] : [];
+    case 'Read': return i.file_path ? [['call:Read', String(i.file_path)]] : [];
+    case 'Glob': return i.pattern ? [['call:Glob', `${i.pattern} ${i.path ?? ''}`.trim()]] : [];
+    case 'Grep': return i.pattern ? [['call:Grep', `${i.pattern} ${i.path ?? i.glob ?? ''}`.trim()]] : [];
+    default: return [];
+  }
+}
+
+export function buildTranscripts(path, maxChars = 60_000) {
+  if (!path || !existsSync(path)) return { lean: '', enriched: '' };
+  const lean = [], rich = [];
+  const push = (arr, role, text) => { for (const l of String(text).split('\n')) arr.push(`[${role}] ${l}`); };
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    try {
+      const j = JSON.parse(line);
+      const msg = j.message ?? j;
+      const role = msg.role || j.type || '';
+      const content = msg.content;
+      if (typeof content === 'string') { push(lean, role, content); push(rich, role, content); }
+      else if (Array.isArray(content)) for (const c of content) {
+        if (c.type === 'text') { push(lean, role, c.text); push(rich, role, c.text); }
+        if (c.type === 'tool_use') for (const [tag, body] of toolUseLines(c)) push(rich, tag, body);
+        if (c.type === 'tool_result' && typeof c.content === 'string') {
+          lean.push(`[tool] ${c.content.slice(0, 400)}`);        // FROZEN: this is the reward channel's input
+          rich.push(`[tool] ${clipEnds(c.content, 300, 500)}`);
+        }
+      }
+    } catch { /* skip non-JSON lines */ }
+  }
+  // Middle-out truncation, applied per string. 22.1% of real transcripts exceed 60k, so this is
+  // a hot path and not a guard, and the TAIL must survive because detectOutcome only reads the
+  // last 8k. maxChars stays at 60k: enrichment costs 1.023x corpus-wide, so raising the cap
+  // would buy nothing and bill for it.
+  const cap = s => s.length > maxChars ? s.slice(0, maxChars / 2) + '\n[...truncated...]\n' + s.slice(-maxChars / 2) : s;
+  return { lean: cap(lean.join('\n')), enriched: cap(rich.join('\n')) };
 }
 
 // Explicit personal capture, shared by the vault_remember MCP tool and the

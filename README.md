@@ -33,7 +33,7 @@ One vault of small markdown notes (one claim each, with commit and file provenan
 | Piece | What it does |
 |---|---|
 | Four hooks | SessionStart injects a memory catalog, this repo's overview card, and pinned preferences; UserPromptSubmit injects notes matched to what you actually typed; SessionEnd and PreCompact queue the transcript for distillation (PreCompact captures detail mid-session before context is summarized away) |
-| Background worker | Distills each finished session into typed notes (exact error strings and versions preserved verbatim), then scores every injected note against the session's real outcome |
+| Background worker | Distills each finished session into typed notes from a transcript that carries the commands that were run and the edit hunks that were applied, so a note can quote the actual fix rather than the assistant's paraphrase of it. It then scores every injected note against the session's outcome, on the sessions where an outcome can be established |
 | Nightly job | Decays unused notes, re-verifies notes whose cited files changed in git, arbitrates near-duplicates, auto-links the knowledge graph, rebuilds repo cards |
 | Personal layer | `vault_remember` (MCP tool or CLI) pins your preferences into every session; `ingest.mjs` chunks your own docs so they surface when a prompt touches them |
 | Live dashboard | Every injection, every score change, every consolidation as a red/green diff, plus cost and abstention telemetry |
@@ -56,7 +56,9 @@ Where it sits relative to what you already have:
 
 **Stale advice retires itself.** Every note cites the files it is about. When those files change, the nightly job flags the note, re-reads the current code with a cheap model, and either restores it with fresh provenance or retires it after two independent stale verdicts. Confident-but-outdated fixes become a visible review queue.
 
-**Useless notes disappear.** Notes earn usefulness from verifiable outcomes (tests passed, build green), judged by a pinned rubric against what the assistant actually did. Helpful notes rise and win more injections; notes that stop contributing decay 5% per idle week and are archived. The vault plateaus instead of growing forever.
+**Useless notes disappear.** When a session ends with a readable outcome, each note that was injected into it has its Q-value moved toward that outcome, weighted by how much the note actually contributed (a pinned judge reads the assistant's own output to decide). Helpful notes rise and win more injections; notes that stop contributing decay 5% per idle week and are archived, so the vault plateaus instead of growing forever.
+
+Being precise about the outcome signal, because it is the part most easily oversold: it is currently read from the transcript, not from a test runner the vault invokes. A session is scored only when its transcript states a result plainly enough to be unambiguous ("14 passed", "build succeeded"); everything else is left as `indeterminate` and produces no Q update at all, on the principle that a guessed reward is worse than none. On this vault that is about 15% of sessions, so Q moves slowly and its influence on ranking is real but modest today. Grounding the reward directly in tool exit status is the next change on the roadmap; until it lands, treat Q as a slow-moving prior rather than a precise utility.
 
 **Irrelevant prompts get silence.** "Hey can you fix this thing please" injects nothing, by design, behind frequency-aware relevance gates. Roughly half of real sessions receive zero notes, the dashboard shows that abstention rate, and prompts about topics the vault does not know are logged as gaps so you can see its blind spots.
 
