@@ -19,6 +19,8 @@ node eval/run.mjs --runs 2        # arm A memory on, arm B MEMORY_OFF=1 control
 
 ## Real-history result (author's vault)
 
+*Run 2026-07-07 against a 33-note vault (the vault holds 55 notes today), on retrieval and capture code that has since changed (`scripts/retrieve.mjs`, `retrieve-prompt.mjs`, `vault.mjs` and `worker.mjs` were reworked on 2026-07-14). The numbers below are honest but stale: the eval has not been re-run.*
+
 9 questions (6 real incidents, 3 negative probes) across 5 repos, 2 runs, 18 samples per arm, control free to explore the repos, hedged non-answers graded as failures:
 
 | | Memory | Control |

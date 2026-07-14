@@ -19,7 +19,7 @@
 - [x] Personal layer: pinned preferences (vault_remember MCP tool, remember.mjs CLI) and hash-tracked reference docs (ingest.mjs), scope-aware schema with reflector poisoning boundary
 - [x] Situation-keyed retrieval (`triggers`): situation phrases in the user's words, indexed as a high-weight FTS column, so a prompt matches on when a note applies, not just its solution text
 - [x] Pitfall/guidance polarity: pitfall notes render in a separate "do NOT repeat" injection block (negative-example framing)
-- [x] Adaptive-k retrieval (cut at a score cliff instead of padding to k) and PreCompact mid-session capture (queue detail before context is summarized away)
+- [x] PreCompact mid-session capture (queue detail before context is summarized away)
 - [x] Offline retrieval-weight fitting (`tune-weights.mjs`) from logged injection outcomes; rationale-first fail-closed contribution judge
 - [x] Starter vault of curated generic gotchas (`starter.mjs`, `trust: seed`, self-retiring as your own notes accumulate)
 - [x] Capture the work, not just the narration: the reflector reads the commands that ran and the code the edits installed, on an enriched transcript projection, while the reward keeps reading a byte-frozen lean one so past Q values stay comparable

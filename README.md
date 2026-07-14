@@ -8,7 +8,9 @@
 [![Node 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-blue)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<img src="docs/demo.gif" width="90%" alt="A new Claude Code session in one repo gets a Windows unicode-crash pitfall injected on UserPromptSubmit, surfaced from the shared vault because the prompt matched the situation, not any shared keyword">
+<img src="docs/demo.svg" width="92%" alt="Terminal output. Running node scripts/starter.mjs installs 10 generic pitfall notes. Piping a session hook payload into scripts/retrieve-prompt.mjs, with the prompt 'my build script crashes with a UnicodeEncodeError printing emoji on windows', prints the note the hook injects: a pitfall titled 'Printing unicode to a legacy Windows console crashes with a cp1252 encode error', rendered in a separate 'Known pitfalls, do NOT repeat' block. The prompt never names cp1252; the note supplies the cause and the fix.">
+
+<sub>The literal bytes `retrieve-prompt.mjs` prints, not a mockup. The prompt states only the symptom; the note supplies the cause (cp1252) and the fix. The match is rare-word overlap, not semantics: the hook injects a note only if it contains at least two of the prompt's rare terms, and this one contains five. Reproduce it with the two commands above.</sub>
 
 **[Click through the live dashboard](https://kirti34n.github.io/unified-mem/demo-site/)**: the real UI, no install, fictional data.
 
@@ -28,7 +30,7 @@ Claude Code ships with good [built-in memory](https://code.claude.com/docs/en/me
 
 ## <img src="docs/icons/layers.svg" width="22" height="22"> What we built
 
-One vault of small markdown notes (one claim each, with commit and file provenance) that every Claude Code session, in every repo, writes to and reads from. Zero dependencies: plain Node builtins plus SQLite full-text search, and the vault is a git repo you own.
+One vault of small markdown notes (one claim each, tagged with the repo they came from, plus the files and commit the claim is about whenever the reflector could identify them: files on 37 of 55 notes in the author's vault, a commit on 24) that every Claude Code session, in every repo, writes to and reads from. Zero dependencies: plain Node builtins plus SQLite full-text search, and the vault is a git repo you own.
 
 | Piece | What it does |
 |---|---|
@@ -37,7 +39,7 @@ One vault of small markdown notes (one claim each, with commit and file provenan
 | Nightly job | Decays unused notes, re-verifies notes whose cited files changed in git, arbitrates near-duplicates, auto-links the knowledge graph, rebuilds repo cards |
 | Personal layer | `vault_remember` (MCP tool or CLI) pins your preferences into every session; `ingest.mjs` chunks your own docs so they surface when a prompt touches them |
 | Live dashboard | Every injection, every score change, every consolidation as a red/green diff, plus cost and abstention telemetry |
-| Eval harness + tuner | An A/B harness measures memory against a no-memory control, and a guarded loop tunes retrieval settings only when a 14+ sample A/B shows a strict correctness improvement |
+| Eval harness + tuner | An A/B harness measures memory (arm A) against a no-memory control (arm B). A separate tuning loop hill-climbs retrieval settings on the memory arm only, one knob at a time: it refuses to decide on fewer than 14 samples, and accepts a knob only on a strict correctness gain, or on a correctness tie with at least 15% shorter output. It is a dry run by default: the winning knob is reported and rolled back unless you pass `--apply` |
 
 Where it sits relative to what you already have:
 
@@ -54,23 +56,23 @@ Where it sits relative to what you already have:
 
 **Say a preference once, keep it forever.** "Remember that I prefer pnpm" (mid-conversation via `vault_remember`, or `npm run remember` from a shell) pins that rule into every future session in every repo. Ingest your style guide once and the right section appears exactly when a prompt touches its topic.
 
-**Stale advice retires itself.** Every note cites the files it is about. When those files change, the nightly job flags the note, re-reads the current code with a cheap model, and either restores it with fresh provenance or retires it after two independent stale verdicts. Confident-but-outdated fixes become a visible review queue.
+**Stale advice retires itself.** A note that came out of changing code cites the files it touched: 37 of the 55 notes in the author's vault do, while the other 18 are about tool or environment behavior (a shell quoting rule, an env var, a CLI flag) and name no repo file to watch. When a cited file changes, in a repo the vault has a local path for, the nightly job flags the note, re-reads the current code with a cheap model, and either restores it with fresh provenance or retires it after two independent stale verdicts. Ingested reference docs are watched by content hash instead. A note with neither a file list nor a source document is outside this path, so a stale environment gotcha can survive until it decays.
 
 **Useless notes disappear.** When a session ends with a readable outcome, each note that was injected into it has its Q-value moved toward that outcome, weighted by how much the note actually contributed (a pinned judge reads the assistant's own output to decide). Helpful notes rise and win more injections; notes that stop contributing decay 5% per idle week and are archived, so the vault plateaus instead of growing forever.
 
 Being precise about the outcome signal, because it is the part most easily oversold: it is currently read from the transcript, not from a test runner the vault invokes. A session is scored only when its transcript states a result plainly enough to be unambiguous ("14 passed", "build succeeded"); everything else is left as `indeterminate` and produces no Q update at all, on the principle that a guessed reward is worse than none. On this vault that is about 15% of sessions, so Q moves slowly and its influence on ranking is real but modest today. Grounding the reward directly in tool exit status is the next change on the roadmap; until it lands, treat Q as a slow-moving prior rather than a precise utility.
 
-**Irrelevant prompts get silence.** "Hey can you fix this thing please" injects nothing, by design, behind frequency-aware relevance gates. Roughly half of real sessions receive zero notes, the dashboard shows that abstention rate, and prompts about topics the vault does not know are logged as gaps so you can see its blind spots.
+**Irrelevant prompts get silence.** "Hey can you fix this thing please" injects nothing, by design, behind a frequency-aware rarity gate on the per-prompt path. A prompt with no rare technical vocabulary retrieves nothing at all, and on this vault the per-prompt path stays silent in about 60% of sessions (104 of 173). Be precise about where the silence lives: session start is not gated this way, and it has injected at least one note in every session it logged, so most sessions still receive the cold-start catalog. Prompts about topics the vault does not know are logged as gaps so you can see its blind spots.
 
 **Costs are capped, not hoped about.** Every pipeline LLM call goes through one budget-guarded path with a local cost ledger. Hard daily cap (default $5), cheap-model routing for small jobs, and internal calls can never trigger reflection of themselves.
 
 ## <img src="docs/icons/cpu.svg" width="22" height="22"> How it works
 
 1. **Capture.** SessionEnd (and PreCompact, mid-session) queues the transcript. The worker reads it once and builds two projections of it: an enriched one carrying the commands that ran and the code the edits installed, which is what the distiller sees, and a lean one that is byte-frozen because it feeds the reward and must stay comparable over time. From the enriched view it distills anything durable into a note: one claim, targeted at 150 words, typed (`recovery`, `strategy`, `optimization`, `decision`, `convention`), schema-gated, secret-scanned, provenance-stamped, with errors, flags and commands quoted verbatim. Routine sessions produce zero notes, correctly.
-2. **Retrieve.** Every note is ranked by `0.40·similarity + 0.30·usefulness + 0.15·recency + 0.15·validity` (BM25 full text against your prompt and git context). Abstention is the default, and the mechanism is a rarity gate rather than a score threshold: a query term counts as evidence only if it is substantial and appears in few notes, and a note needs at least two such terms before it may be injected. A prompt with no rare technical vocabulary therefore retrieves nothing.
+2. **Retrieve.** Every note is ranked by `0.40·similarity + 0.30·usefulness + 0.15·recency + 0.15·validity` (lexical match against your prompt and git context: SQLite FTS5/BM25 when the Node build's bundled SQLite includes FTS5, as Node 24.x and current Node 22 LTS builds do, and a coarser keyword-overlap score when it does not, as on the Node 22.13 floor this project still supports). Abstention is the default, and the mechanism is a rarity gate rather than a score threshold: a query term counts as evidence only if it is substantial and appears in few notes, and a note needs at least two such terms before it may be injected. A prompt with no rare technical vocabulary therefore retrieves nothing.
 3. **Learn.** When a session ends with an outcome that is stated plainly enough to be unambiguous, each injected note's Q-value moves: `Q ← clamp(Q + α·c·(r − Q))`, where the contribution `c` comes from a pinned judge reading the assistant's own output. Guardrails: per-session delta cap, clamping, no update on ambiguous outcomes, a bare checkmark is not a success signal. Note the honest shape of this: the outcome is read from the transcript, not obtained by the vault running your tests, and the bar for "unambiguous" is high, so most sessions produce no update at all and Q moves slowly.
 4. **Maintain.** Nightly: git-diff invalidation, two-strike verification, duplicate arbitration (duplicate / update / coexisting) whose verdict is executed rather than merely logged, decay, archival, graph auto-linking, entity hubs, repo cards.
-5. **Measure.** The A/B harness proves value against a control with full repo access, and the improve loop tunes config only with 14+ samples and above-noise wins.
+5. **Measure.** The A/B harness proves value against a control with full repo access. The improve loop refuses to run on fewer than 14 eval samples and accepts a knob only if correctness strictly improves (or ties with at least 15% fewer output characters), and it is dry-run by default: it reports the winning knob and rolls `config.json` back unless you pass `--apply`. At 14 samples a single flipped answer clears that bar, which is inside the eval's own run-to-run noise, so an accepted knob is a suggestion to re-measure, not a proof.
 
 <div align="center">
 <img src="docs/architecture.svg" width="92%" alt="Architecture of the learning loop. A Claude Code session in any repo reads memory on the SessionStart and UserPromptSubmit hooks and queues its transcript on SessionEnd and PreCompact. The read path abstains by default: a prompt with no rare technical vocabulary injects nothing, and a superseded note keeps its retrieval slot but serves the content of the note that replaced it. worker.mjs builds two projections of each transcript from one read, an enriched one carrying the commands and edit hunks that goes to the reflector, and a lean one that is byte-frozen because it feeds the reward. It distills the session into typed notes and scores each injected note against the session's outcome. consolidate.mjs maintains the vault nightly with git-diff invalidation, two-strike verification, decay, and a duplicate arbiter whose verdict is executed as a supersede. A free deterministic eval and a paid A/B eval measure the loop. Every step is observable on the localhost:7777 dashboard.">
@@ -140,7 +142,7 @@ Two evals ship in the box, and they answer different questions. The paid one ask
 
 **Does it stay quiet?** `node eval/negatives.mjs` fires ordinary non-technical prompts ("what should we have for dinner tonight") from every repo and requires zero retrievals, while separately requiring that real notes stay retrievable, since a gate that abstains on everything would otherwise score perfectly. It is deterministic, LLM-free, costs nothing, and runs in CI. Current: **0 false positives across 280 negative probes, with full recall on the positive arm.** It is in the repo because this exact failure went unmeasured once and regressed silently: the retrieval query was folding the working directory name into itself, and since a repo name is common in that repo's own notes yet still rare across the vault, the folder name alone satisfied the relevance gate for every prompt. Dinner plans retrieved SQLite notes. Nothing caught it, because nothing was looking.
 
-The gap is the point: with full repo access the control re-derived the answer 44% of the time; with the matching note in context, 83%. Three incidents (a Windows kill-by-port fix, a hardcoded date filter, a SQLite busy-timeout) the control failed both attempts and memory answered both. One incident (a PowerShell dollar-swallow bug) neither arm got, because the vault holds no note for it: that is the honest shape of a real memory system, not a 100% headline. Latency is a wash, and memory did not degrade the honesty probes. This is one run of a nine-question, single-vault demonstration, not a field benchmark; the harness ships in the box so you can measure your own history ([docs/EVAL.md](docs/EVAL.md)).
+The gap is the point: on the six real-incident questions (12 runs per arm) the control, with full repo access, re-derived the answer 3 times (25%); with the matching note in context, memory answered 10 (83%). The 15/18 and 8/18 totals in the table above are the harness's overall correct rate, which also counts the six negative-probe runs, where correctly saying "I don't know" scores as correct. Three incidents (a Windows kill-by-port fix, a hardcoded date filter, a SQLite busy-timeout) the control failed both attempts and memory answered both. One incident (a PowerShell dollar-swallow bug) neither arm got, because the vault holds no note for it: that is the honest shape of a real memory system, not a 100% headline. Latency is a wash, and memory did not degrade the honesty probes. This is one run of a nine-question, single-vault demonstration, not a field benchmark; the harness ships in the box so you can measure your own history ([docs/EVAL.md](docs/EVAL.md)).
 
 ## <img src="docs/icons/monitor.svg" width="22" height="22"> The dashboard
 
@@ -154,13 +156,13 @@ Six live views at `localhost:7777`, all reading a local, private vault:
 - <img src="docs/icons/list.svg" width="15" height="15"> **Sessions**: what each session received and the Q-delta each note earned from the outcome
 - <img src="docs/icons/share.svg" width="15" height="15"> **Notes graph**: atomic notes linked through shared entities, sized by learned usefulness
 - <img src="docs/icons/trend.svg" width="15" height="15"> **Q evolution**: usefulness being learned; rising lines help, sagging lines decay toward archive
-- <img src="docs/icons/diff.svg" width="15" height="15"> **Consolidation log**: every verification, decay, and merge as an exact red/green diff
+- <img src="docs/icons/diff.svg" width="15" height="15"> **Consolidation log**: every verification, invalidation, supersession and archival as an exact red/green frontmatter diff (notes are never merged and note bodies are never rewritten)
 - <img src="docs/icons/database.svg" width="15" height="15"> **Metrics**: stale-retrieval rate, abstention rate, vault size trend, spend against the daily budget
 
 <div align="center">
 <img src="docs/screenshots/graph.png" width="49%" alt="The notes graph view: atomic notes colored by type and sized by learned usefulness, linked through shared entity nodes, with a needs-review note ringed in amber">
 &nbsp;
-<img src="docs/screenshots/consolidation.png" width="49%" alt="The consolidation log view: nightly decay, verification, git-diff invalidation, and edits, each shown as the exact red and green diff applied to the note">
+<img src="docs/screenshots/consolidation.png" width="49%" alt="The consolidation log view: nightly Q decay, verification, and git-diff invalidation, each status change shown as the exact red and green frontmatter diff applied to the note">
 </div>
 
 ## <img src="docs/icons/info.svg" width="22" height="22"> Install
@@ -174,11 +176,11 @@ Six live views at `localhost:7777`, all reading a local, private vault:
 
 That wires up all four hooks and the `vault_search` / `vault_remember` MCP tools for every repo, now and in the future. Your vault lives in `~/.unified-mem/vault` (outside the plugin, so it survives updates). Needs Node 22.13+ on your PATH. The plugin covers the in-session parts (inject memory, queue finished sessions); to turn those queued sessions into notes and run nightly upkeep, also start the worker and consolidator (next section, or schedule them per the [FAQ](docs/FAQ.md)).
 
-**Try the dashboard first (60 seconds, no install):**
+**Try the dashboard first (60 seconds, no npm install, but `init.mjs` is real setup):**
 
 ```bash
 git clone https://github.com/kirti34n/unified-mem && cd unified-mem
-node scripts/init.mjs   # creates your vault: its own git repo, separate from this checkout
+node scripts/init.mjs   # real setup: read the note below before running it
 node scripts/seed.mjs   # six weeks of fictional demo history to explore
 node scripts/dashboard.mjs   # then open http://localhost:7777
 ```
@@ -242,4 +244,4 @@ Factual and complementary: instructions stay in CLAUDE.md, project working memor
 
 ## <img src="docs/icons/shield.svg" width="22" height="22"> License
 
-[MIT](LICENSE). Bundled third-party components (PrismJS) are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). Bundled third-party components (PrismJS, Feather icons) are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

@@ -8,7 +8,7 @@ You need Node 22.13 or newer (that is where `node:sqlite` unflagged; older versi
 
 ```bash
 git clone https://github.com/kirti34n/unified-mem && cd unified-mem
-node scripts/init.mjs     # creates a vault (its own git repo, outside this checkout)
+node scripts/init.mjs     # creates a vault, and also changes machine state outside this checkout (read the warning below first)
 node scripts/seed.mjs     # demo history to explore
 node --test               # unit tests (must pass)
 node scripts/smoke.mjs    # end-to-end smoke in a temp vault (must print SMOKE OK)

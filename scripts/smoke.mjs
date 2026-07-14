@@ -21,7 +21,11 @@ const fail = (step, r) => {
 };
 
 let r = run(['scripts/seed.mjs']);
-if (!/14 notes indexed/.test(r.stdout)) fail('seed (expected "14 notes indexed")', r);
+// 15, not 14: the demo now carries the LOSER of its dedupe pair as a real note file
+// (2026-06-18-redis-setnx-lock, status superseded). The engine never deletes a duplicate, it marks
+// it superseded and redirects retrieval to the winner, so a demo whose duplicate simply vanished
+// was showing a mechanism this system does not have.
+if (!/15 notes indexed/.test(r.stdout)) fail('seed (expected "15 notes indexed")', r);
 
 // A DEMO-ONLY vault must inject NOTHING into a real session: not the note bodies,
 // not the pinned prefs, and not the MEMORY CATALOG (fictional repo names must not

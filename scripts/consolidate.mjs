@@ -2,9 +2,19 @@
 //   INVALIDATE  active notes whose files changed since last_validated → needs-review
 //   DECAY       Q ← Q·factor^weeks on notes unused past threshold
 //   ARCHIVE     Q < floor AND long-unused → archived
-//   DEDUPE      flag near-duplicate pairs for review (LLM merge is Phase 3+)
-//   METRICS     upsert today's metrics_daily row + enforce active cap report
-// Every content change writes a consolidations row with the exact diff (dashboard renders it).
+//   DEDUPE      flag near-duplicate pairs (bodies are never merged: context-collapse risk, R1)
+//   ARBITER     up to 3 unjudged pairs per run go to an LLM: DUPLICATE / UPDATE / COEXISTING
+//   SUPERSEDE   a DUPLICATE/UPDATE verdict is EXECUTED: the loser gets status 'superseded' +
+//               superseded_by, and retrieval serves the winner in the loser's slot. COEXISTING
+//               is inert and is the common outcome in practice (13 of 14 live verdicts).
+//   VERIFY      needs-review notes re-checked against current code (two strikes before archive)
+//   AUTOLINK    wikilinks between notes citing the same file or sharing >=2 entities
+//   HUBS/CARDS  regenerate entities/*.md hub pages and repos/*.md repo overview cards
+//   METRICS     upsert today's metrics_daily row + enforce active_cap_per_repo by archiving the
+//               lowest-Q, longest-idle overflow (preference_cap stays warn-only)
+// Writes are scoped to the frontmatter block: a note body is never rewritten here. Status changes
+// write a consolidations row with the exact frontmatter diff (the dashboard renders it); decay and
+// autolink update the note file without logging a diff.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,9 +27,13 @@ import { openDb, reindexNotes, updateNoteFile, parseNote, runClaude, todaySpendU
 // index/run-nightly.cmd, which runs it again. Both fired at 03:00 and both did work. The
 // live vault carries the evidence: two consolidation process timestamps 63ms apart on
 // 2026-07-13 (21:30:04.825Z and .888Z), three notes VERIFIED twice, and one dedupe pair
-// arbitrated and BILLED twice. init.mjs now reaps that legacy task, but the reap alone is
-// not the fix: nothing stops a human running this by hand while the nightly job is
-// mid-flight, and a lock is what actually makes the invariant hold.
+// arbitrated and BILLED twice. Nothing reaps that legacy task: init.mjs only queries and
+// creates/re-points `UnifiedMemWorker`, it never deletes a task, and docs/FAQ.md still lists the
+// manual `schtasks /Create ... /TN unified-mem-dream` line as a hand-scheduling option, so anyone
+// who runs init.mjs and also follows that line ends up double-scheduled exactly as above. If you
+// have the legacy task, delete it yourself: schtasks /delete /tn unified-mem-dream /f. Which means
+// this lock is not a belt-and-braces measure, it is the only thing holding the invariant, and it
+// has to be: nothing stops a human running this by hand while the nightly job is mid-flight.
 //
 // The duplicate spend is the cheap half. The dangerous half: the two-strike rule further
 // down (a first STALE verdict only records `verify-stale-1`; only a SECOND one archives)
@@ -249,8 +263,17 @@ ${noteText}`;
 }
 
 // DEDUPE candidates, flag, don't auto-merge (context collapse risk, R1)
+//
+// DEMO GUARD, and it is load-bearing rather than cosmetic. seed.mjs writes its fictional history
+// into the SAME tables the engine reads, tagged demo=1, and it writes real note FILES to disk so
+// the vault looks lived-in. Nothing downstream filtered on demo, so a seeded dedupe row was a live
+// instruction to this job: the arbiter would have sent a fictional pair to the PAID model on the
+// next nightly run, and the actuator would have rewritten a fictional note's frontmatter as though
+// it were real knowledge. Fixing the demo would have started billing the user. Every read of the
+// consolidations log below is now scoped to demo=0, so the demo can only ever be looked at, never
+// acted on. Demo notes are excluded from the candidate scan for the same reason.
 const seenPair = new Set();
-for (const n of notes.filter(n => n.status === 'active')) {
+for (const n of notes.filter(n => n.status === 'active' && n.trust !== 'demo')) {
   try {
     const match = n.title.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3).map(w => `"${w}"`).join(' OR ');
     if (!match) continue;
@@ -263,7 +286,7 @@ for (const n of notes.filter(n => n.status === 'active')) {
       const pair = [n.id, hit.id].sort().join('|');
       if (seenPair.has(pair)) continue;
       seenPair.add(pair);
-      const already = db.prepare("SELECT 1 FROM consolidations WHERE op='dedupe-candidate' AND detail LIKE ?").get(`%${pair}%`);
+      const already = db.prepare("SELECT 1 FROM consolidations WHERE op='dedupe-candidate' AND demo=0 AND detail LIKE ?").get(`%${pair}%`);
       if (already) continue;
       log.run(ts, 'dedupe-candidate', n.id, `Possible near-duplicate pair: ${pair}, review and merge manually (keep richest detail)`, null);
       counts.dedupe++;
@@ -281,10 +304,10 @@ if (!process.argv.includes('--no-verify')) {
   // consults the verdict table lets a duplicate pair through twice within a single pass:
   // both copies are filtered before either verdict is written. That already happened (the
   // trust-tier|demo-assets pair was arbitrated twice on 2026-07-13, paying for it twice).
-  const judged = new Set(db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-verdict'").all()
+  const judged = new Set(db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-verdict' AND demo=0").all()
     .map(r => /^([a-z0-9-]+)\|([a-z0-9-]+)/i.exec(r.detail)).filter(Boolean).map(m => `${m[1]}|${m[2]}`));
   const pairs = [];
-  for (const r of db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-candidate'").all()) {
+  for (const r of db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-candidate' AND demo=0").all()) {
     const m = /pair: ([a-z0-9-]+)\|([a-z0-9-]+)/i.exec(r.detail); // id-charset match: \S+ would swallow the trailing comma
     if (!m) continue;
     const key = `${m[1]}|${m[2]}`;
@@ -337,8 +360,8 @@ ${textB}`;
 // COEXISTING is deliberately inert; it is 13 of 14 live verdicts and there is nothing to do
 // about a pair that is correctly two separate notes.
 {
-  const actuated = new Set(db.prepare("SELECT note_id FROM consolidations WHERE op='supersede'").all().map(r => r.note_id));
-  for (const r of db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-verdict'").all()) {
+  const actuated = new Set(db.prepare("SELECT note_id FROM consolidations WHERE op='supersede' AND demo=0").all().map(r => r.note_id));
+  for (const r of db.prepare("SELECT detail FROM consolidations WHERE op='dedupe-verdict' AND demo=0").all()) {
     const m = /^([a-z0-9-]+)\|([a-z0-9-]+)\s*→\s*(DUPLICATE|UPDATE|COEXISTING):(.*)$/is.exec(r.detail);
     if (!m) continue;
     const [, a, b, verdict, reason] = m;

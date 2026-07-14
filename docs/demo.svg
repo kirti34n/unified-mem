@@ -1,0 +1,32 @@
+<svg viewBox="0 0 860 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Terminal recording. Running node scripts/starter.mjs installs 10 generic pitfall notes. Piping a session hook payload into scripts/retrieve-prompt.mjs, with the prompt: my build script crashes with a UnicodeEncodeError printing emoji on windows, prints the note the hook injects: a pitfall titled Printing unicode to a legacy Windows console crashes with a cp1252 encode error, rendered in a separate Known pitfalls, do NOT repeat block. The prompt never names cp1252; the note supplies the cause and the fix.">
+  <style>
+    .term{ fill:#0d1117; stroke:#30363d; stroke-width:1; }
+    text{ font-family:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace; font-size:12.5px; }
+    .fg{ fill:#c9d1d9; } .cmd{ fill:#7ee787; font-weight:700; } .ok{ fill:#79c0ff; }
+    .hdr{ fill:#d2a8ff; font-weight:700; } .avoid{ fill:#ffa198; font-weight:700; } .dim{ fill:#8b949e; }
+    .dot1{fill:#ff5f56}.dot2{fill:#ffbd2e}.dot3{fill:#27c93f}
+    .title{ fill:#8b949e; font-size:11.5px; }
+  </style>
+  <rect class="term" x="0.5" y="0.5" width="859" height="409" rx="9"/>
+  <circle class="dot1" cx="22" cy="21" r="5.5"/><circle class="dot2" cx="41" cy="21" r="5.5"/><circle class="dot3" cx="60" cy="21" r="5.5"/>
+  <text class="title" x="430" y="25" text-anchor="middle">unified-mem: real output of scripts/retrieve-prompt.mjs, not a mockup</text>
+  <line x1="0" y1="42" x2="860" y2="42" stroke="#30363d"/>
+  <text class="cmd" x="20" y="60">$ node scripts/starter.mjs</text>
+  <text class="ok" x="20" y="79">starter installed: 10 generic pitfall/guidance notes written, 10 total notes indexed</text>
+  <text class="fg" x="20" y="98"></text>
+  <text class="cmd" x="20" y="117">$ echo '{"cwd":"/tmp/billing-worker","prompt":"my build script crashes with a UnicodeEncodeError</text>
+  <text class="fg" x="20" y="136">  printing emoji on windows"}' | node scripts/retrieve-prompt.mjs</text>
+  <text class="hdr" x="20" y="155">Vault notes matching this prompt (cross-repo knowledge; verify against current code):</text>
+  <text class="fg" x="20" y="174"></text>
+  <text class="hdr" x="20" y="193">Known pitfalls, do NOT repeat:</text>
+  <text class="fg" x="20" y="212"></text>
+  <text class="avoid" x="20" y="231">## AVOID: Printing unicode to a legacy Windows console crashes with a cp1252 encode error</text>
+  <text class="dim" x="20" y="250">(repos:  · files: )</text>
+  <text class="fg" x="20" y="269">**Problem:** print() of non-ASCII (emoji, arrows, box-drawing) throws UnicodeEncodeError:</text>
+  <text class="fg" x="20" y="288">  charmap codec on a legacy Windows console (cp1252). **Fix:** do NOT emit non-ASCII to a</text>
+  <text class="fg" x="20" y="307">  console you do not control; set PYTHONUTF8=1 or reconfigure stdout to utf-8</text>
+  <text class="fg" x="20" y="326">  (sys.stdout.reconfigure(encoding="utf-8")) at startup, or keep output ASCII-only. **Gotchas:**</text>
+  <text class="fg" x="20" y="345">  it passes on Mac/Linux and in redirected pipes, so it only surfaces on a real Windows</text>
+  <text class="fg" x="20" y="364">  terminal.</text>
+  <text class="fg" x="20" y="383"></text>
+</svg>

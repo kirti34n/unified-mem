@@ -1,8 +1,15 @@
 // UserPromptSubmit hook: just-in-time retrieval. The user's actual prompt is a far
 // stronger query than session-start git context, and notes injected adjacent to the
 // decision point get used more than ones buried at session start.
-// Aggressive floor (prompt_min_sim) + dedupe vs everything already injected this
-// session: MOST prompts should inject nothing. Never blocks; any failure exits 0.
+// MOST prompts inject nothing, and TWO rare-term filters are what do that, not the sim floor:
+// (1) the prompt must carry >=2 terms that are rare in the vault (df <= 30% of notes) AND longer
+// than 4 chars, else we exit before scoring; (2) a note that wins a slot must itself contain >=2
+// of those rare terms. 0 of 280 off-topic probes leak, pinned in CI by eval/negatives.mjs.
+// prompt_min_sim is a tail trim, NOT a gate: ftsSim normalizes BM25 against the best hit, so the
+// top note always scores sim = 1.0 and no floor below 1.0 can reject it. It only drops weaker
+// runners-up (it does bite on the keyword fallback path, where FTS5 is unavailable and sim is
+// absolute rather than normalized). Plus dedupe vs everything already injected this session.
+// Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync, writeFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { openDb, scoreNotes, adaptiveCut, resolveSupersessions, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
@@ -71,9 +78,13 @@ try {
   }
   // trust:demo is excluded here too, not just at session-start: fictional seed
   // content must never ride into a real session via a prompt-match either.
-  // Every candidate here passed the sim floor (no utility bypass on the prompt path),
-  // so adaptiveCut is safe; it is applied per polarity group so a pitfall is cut on its
-  // OWN cliff and never suppressed by higher-scoring guidance notes.
+  // Every candidate here passed the sim floor (no utility bypass on the prompt path, unlike
+  // retrieve.mjs). adaptiveCut is applied per polarity group, and it is the per-group maxK cap
+  // that does the work: guidance and pitfalls each get their own k slots, so a pitfall is never
+  // crowded out by higher-scoring guidance. The cliff half of adaptiveCut never fires here: a
+  // score carries a large similarity-independent floor (q, recency, validity), so the 50%
+  // relative drop it looks for does not occur (live vault: rank 2 never scores below 0.52, a cut
+  // would need 0.47 or less). See docs/ROADMAP.md: adaptiveCut should be fixed or retired.
   // Supersede redirect runs BEFORE the seen-filter so a note already injected this session
   // cannot be re-injected via its superseded alias, and before the rare-term filter so the
   // WINNER's own text is what has to earn the slot.

@@ -123,7 +123,8 @@ async function poll(){
     const r=await fetch('/api/state');S=await r.json();
     $('#updated').textContent='updated '+new Date().toLocaleTimeString();
     const f=JSON.stringify([S.summary,S.sessions.length,S.injections.length,S.q_history.length,S.consolidations.length]);
-    $('#hstats').innerHTML=`vault: <b>${S.summary.active}</b> active · <b>${S.summary.needs_review}</b> needs-review · <b>${S.summary.archived}</b> archived · stale rate <b>${(S.summary.stale_rate*100).toFixed(1)}%</b>`;
+    $('#hstats').innerHTML=`vault: <b>${S.summary.active}</b> active · <b>${S.summary.needs_review}</b> needs-review · <b>${S.summary.archived}</b> archived · stale rate <b>${(S.summary.stale_rate*100).toFixed(1)}%</b>`+
+      (S.summary.demo_rows?` · <b style="color:var(--warn)">includes ${S.summary.demo_rows} seeded demo rows (fictional)</b>`:'');
     if(f!==fp){fp=f;render();}
   }catch(e){$('#updated').textContent='server unreachable';}
 }
@@ -283,7 +284,7 @@ function lineChart(el,{series,yMax=1,yTicks,h=300,fmtY=v=>v,fmtX}){
 
 /* ---------- Q evolution ---------- */
 function rQ(m){
-  m.innerHTML=`<h2>Q evolution</h2><div class="sub">Learned usefulness per note over time. Rising = the note keeps helping sessions succeed (R2/R3); sagging = weekly decay of unused notes (R7). Flat-lining into the floor ends in archive.</div>
+  m.innerHTML=`<h2>Q evolution</h2><div class="sub">Learned usefulness per note over time, an estimate rather than a measurement. Q moves only on the minority of sessions whose transcript plainly states a result (about 15% on the real vault; the rest are indeterminate and change nothing), the reward is read from that transcript, not from a test the vault runs, and a pinned LLM judge estimates how much each injected note influenced the assistant's output. Rising = the judge kept crediting the note on sessions that reported success (R2/R3). Sagging = it was credited on a session that reported failure, or it went unused and took the weekly decay (R7). Sitting unused at the floor ends in archive.</div>
   <div class="card"><div id="qc"></div><div class="legend" id="ql"></div>
   <details><summary>Data table · every Q update</summary><table id="qt"></table></details></div>`;
   const ids=[...new Set(S.notes.map(n=>n.id))].sort();
@@ -304,12 +305,13 @@ function rQ(m){
 /* ---------- Consolidation ---------- */
 function rCons(m){
   const notesById=Object.fromEntries(S.notes.map(n=>[n.id,n]));
-  const icon={merge:'⇄',edit:'✎',invalidate:'⚠',verify:'✓',decay:'↓',archive:'⌫'};
-  m.innerHTML=`<h2>Consolidation log</h2><div class="sub">The nightly "dream" job (R6): merges, edits, git-diff invalidations, verifications, decay, archival. Every content change is shown as the exact diff applied to the note.</div>`+
+  const icon={invalidate:'⚠','invalidate-doc':'⚠',reingest:'↺',verify:'✓','verify-stale-1':'⚠',decay:'↓',archive:'⌫','dedupe-candidate':'⇄','dedupe-verdict':'⚖',supersede:'⇒',autolink:'⇔'};
+  m.innerHTML=`<h2>Consolidation log</h2><div class="sub">The nightly "dream" job (R6): git-diff invalidation, source-doc invalidation, two-strike verification, Q decay, archival, near-duplicate flagging with an arbiter verdict, supersession, and auto-linking. It never merges two notes and never rewrites a note body: writes are scoped to the frontmatter block. Status changes carry the exact frontmatter diff applied to the note; decay and auto-link update the file without logging a diff.</div>`+
   S.consolidations.map(c=>`<div class="card">
     <div class="sess-head"><span class="op ${c.op}">${icon[c.op]||''} ${c.op.toUpperCase()}</span>
     <span class="when">${fmtTs(c.ts)}</span>
-    <span class="chip">${esc(shortName(c.note_id||''))}</span></div>
+    <span class="chip">${esc(shortName(c.note_id||''))}</span>
+    ${c.demo?'<span class="chip" style="border-color:var(--warn);color:var(--warn)">DEMO</span>':'<span class="tag-live">LIVE</span>'}</div>
     <div class="sess-sum">${esc(c.detail)}</div>
     ${c.diff?`<pre class="diff-highlight"><code class="language-diff">${esc(c.diff)}</code></pre>`:''}
     </div>`).join('');
@@ -324,22 +326,26 @@ function spark(vals,w=84,h=26){
   return `<svg width="${w}" height="${h}"><polyline fill="none" stroke="#898781" stroke-width="1.5" points="${p.join(' ')}"/><circle cx="${p.at(-1).split(',')[0]}" cy="${p.at(-1).split(',')[1]}" r="3" fill="#3987e5"/></svg>`;
 }
 function rMetrics(m){
-  const M=S.metrics,last=M.at(-1)||{},wk=M.at(-8)||last;
+  const M=S.metrics,last=M.at(-1)||{};
   const stalePct=S.summary.stale_rate*100;
   const staleOk=stalePct<5;
-  const dAct=(last.active||0)-(wk.active||0);
+  // metrics_daily holds one row per day the nightly job RAN, not per calendar day, so an
+  // index offset is not a week. Select the baseline by date and name the date we compared against.
+  const cut=new Date(Date.now()-6048e5).toISOString().slice(0,10);
+  const base=M.filter(d=>d.date<=cut).at(-1)||null;
+  const dAct=base?S.summary.active-base.active:null;
   m.innerHTML=`<h2>Metrics</h2><div class="sub">The accuracy targets from PLAN §6 · vault size must plateau (R7), stale retrievals stay under 5% (R9).</div>
   <div class="tiles">
     <div class="card tile"><div class="lbl">Active notes</div><div class="val">${S.summary.active}</div>
-      <div class="delta" style="color:${dAct>=0?'var(--good)':'var(--crit)'}">${dAct>=0?'+':''}${dAct} vs last week</div>${spark(M.map(d=>d.active))}</div>
+      <div class="delta" style="color:${dAct==null?'var(--ink2)':(dAct>=0?'var(--good)':'var(--crit)')}">${dAct==null?'no metrics row from 7+ days back':`${dAct>=0?'+':''}${dAct} since ${base.date}`}</div>${spark(M.map(d=>d.active))}</div>
     <div class="card tile"><div class="lbl">Needs review</div><div class="val">${S.summary.needs_review}</div>
       <div class="note">${S.summary.needs_review?'<span style="color:var(--warn)">⚠ awaiting verification</span>':'✓ none pending'}</div></div>
     <div class="card tile"><div class="lbl">Stale retrieval rate</div><div class="val">${stalePct.toFixed(1)}%</div>
       <div class="delta" style="color:${staleOk?'var(--good)':'var(--crit)'}">${staleOk?'✓ under':'✗ over'} 5% target</div></div>
     <div class="card tile"><div class="lbl">Mean Q (non-archived)</div><div class="val">${S.summary.mean_q.toFixed(2)}</div>
       <div class="note">${S.summary.retrievals} total retrievals logged</div></div>
-    <div class="card tile"><div class="lbl">Abstention rate</div><div class="val">${((S.summary.abstention_rate??0)*100).toFixed(0)}%</div>
-      <div class="note">sessions injected nothing · ${S.summary.gaps??0} gap prompts logged</div></div>
+    <div class="card tile"><div class="lbl">Sessions with no note injected</div><div class="val">${S.summary.real_sessions?((S.summary.no_injection_rate??0)*100).toFixed(0)+'%':'no data'}</div>
+      <div class="note">share of real sessions with no injection row. Today these are entirely transcripts the worker queued without the retrieval hook ever running, not the memory choosing silence: session start has injected at least one note in every session it logged. Abstention is real on the per-prompt path, measured by eval/negatives.mjs · ${S.summary.gaps??0} gap prompts logged</div></div>
     <div class="card tile"><div class="lbl">Spend today</div><div class="val">$${(S.summary.spend_today_usd??0).toFixed(2)}</div>
       <div class="note">pipeline LLM calls · budget $${S.summary.daily_budget_usd??'?'} / day</div></div>
   </div>

@@ -17,7 +17,7 @@ const opt = (f, d) => argv.includes(f) ? argv[argv.indexOf(f) + 1] : d;
 const FOREVER = argv.includes('--forever');
 // DRY RUN BY DEFAULT. This loop rewrites the live config.json, and it has already shipped a bad
 // write: iteration 2 accepted weights.sim 0.4 -> 0.5 on n=3, with BOTH arms at correct_rate 1.0,
-// purely on a median-output-length tiebreak of 10 characters. That value was committed (9922166)
+// purely on a median-output-length tiebreak (501 characters to 416). That value was committed (9922166)
 // and had to be reverted by hand (2d1b52a). Meanwhile three eval runs on the same day with an
 // IDENTICAL config scored 100% / 93% / 83%: run-to-run noise is several times larger than the
 // margin the loop accepts on. A process that mutates production config from a signal smaller
@@ -127,6 +127,7 @@ for (let i = 1; i <= ITER; i++) {
     else if (beats(summary, best.summary)) {
       verdict = APPLY ? 'accept' : 'accept-dry-run';
       best = r; bestScore = score;
+      accepted.push(`${h.knob}=${h.value}`);
       if (!APPLY) writeFileSync(CONFIG_PATH, backup);
     }
     else { verdict = 'revert'; writeFileSync(CONFIG_PATH, backup); }
@@ -134,4 +135,9 @@ for (let i = 1; i <= ITER; i++) {
   console.log(`  TEST: correct ${summary ? (summary.A.correct_rate * 100).toFixed(0) + '%' : '?'} · n=${summary?.A.n ?? '?'} · score ${score?.toFixed(1) ?? '?'} vs best ${bestScore.toFixed(1)} → ${verdict.toUpperCase()}`);
   log({ ts: new Date().toISOString(), iter: i, knob: h.knob, value: h.value, summary, score, verdict });
 }
-console.log(`\ndone. best score ${bestScore.toFixed(1)} · winning config in config.json · full log in improve/log.jsonl`);
+const state = APPLY
+  ? (accepted.length ? `wrote ${accepted.join(', ')} to ${CONFIG_PATH}`
+                     : `no knob beat the baseline, ${CONFIG_PATH} holds the baseline config`)
+  : (accepted.length ? `DRY RUN: ${CONFIG_PATH} holds the baseline config, NOT the accepted knob(s) ${accepted.join(', ')} (they were rolled back). Set one by hand to keep it: an --apply re-run will not re-propose it, because every knob tried is recorded in improve/log.jsonl and skipped from then on.`
+                     : `DRY RUN: no knob beat the baseline, ${CONFIG_PATH} holds the baseline config`);
+console.log(`\ndone. best score ${bestScore.toFixed(1)} · ${state} · full log in improve/log.jsonl`);

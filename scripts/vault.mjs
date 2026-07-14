@@ -380,10 +380,19 @@ export function resolveSupersessions(db, notes, maxHops = 4) {
   return out;
 }
 
-// Adaptive-k: cut a scored, descending-sorted list at its largest RELATIVE score drop
-// instead of always padding to k. A clear "cliff" means the notes past it are much
-// weaker and only dilute attention (and pick up unfair r=0 judgments); when scores
-// taper smoothly there is no cliff and the full k is kept. Always keeps >= 1.
+// Adaptive-k, currently INERT: it does not cut on real data, callers get the full top-k.
+// Intent: cut a scored, descending-sorted list at its largest RELATIVE score drop (>=50%)
+// instead of padding to k, so a clear cliff drops weak tail matches. Why it does not fire:
+// sim contributes at most w.sim (0.40 of the normalized score) while every candidate also
+// carries a similarity-independent floor (w.q*q + w.recency*recency + w.validity*validity),
+// so a following candidate does not fall to half of the one above it. Measured on the live
+// vault (55 notes, default weights): the most any note can score is 0.94 (sim=1 on the
+// highest floor), so a cut needs a following candidate at or below 0.47, but the 5th
+// highest score with sim=0 is already 0.49. Replaying real queries through both callers
+// (retrieve.mjs and retrieve-prompt.mjs): 0 cuts, full list every time, worst adjacent
+// drop about 40%. The unit test only cuts because it passes synthetic scores
+// (0.9, 0.85, 0.2, 0.15) below anything this vault's floor allows. Fix it or delete it
+// (tracked in docs/ROADMAP.md). Always keeps >= 1.
 export function adaptiveCut(scored, maxK = scored.length) {
   const list = scored.slice(0, maxK);
   if (list.length <= 1) return list;
@@ -564,9 +573,15 @@ export function duplicateFrontmatterKey(text) {
   return null;
 }
 
-// Verifiable-outcome heuristic (R5). Deliberately conservative: a bare checkmark
-// is NOT a success signal (Claude Code output is full of them), "0 failed" is not
-// a failure. LLM judgment only ever refines contribution, never the outcome.
+// Outcome heuristic (R5), read from the TRANSCRIPT, never from a test the vault ran: the worker
+// invokes no test runner and reads no exit status. It regex-scans the last 8k of the lean
+// transcript, so the only outcome it can see is one the session itself already stated or printed.
+// Deliberately conservative: a bare checkmark is NOT a success signal (Claude Code output is
+// full of them), "0 failed" is not a failure, and anything ambiguous stays 'indeterminate',
+// which scoreSession turns into no Q update at all (a guessed reward is worse than none).
+// Measured 2026-07-14 on the live vault: 148 of 173 sessions are indeterminate, so the reward
+// resolves on roughly 15% of sessions and Q is a slow prior, not a measured utility.
+// LLM judgment only ever refines contribution, never the outcome.
 export function detectOutcome(text) {
   const tail = text.slice(-8000);
   if (/(\d+ (passed|passing)|all tests pass|tests? (pass|green)|build succeeded|verified working)/i.test(tail)

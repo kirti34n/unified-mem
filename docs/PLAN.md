@@ -33,7 +33,7 @@ unified-mem is NOT a replacement for those, it is the **unified layer on top of 
 covering exactly what they don't:
 
 1. **Cross-repo blindness**, built-in memory is keyed by working directory. A fix discovered in `repo-A` never reaches `repo-B`; every project's memory is an island. The unified layer shares durable knowledge across all repos.
-2. **No learning loop**, nothing built-in measures whether a remembered fact actually *helps*; nothing scores usefulness from session outcomes. Here, notes earn Q-value from verifiable outcomes and decay when they stop contributing.
+2. **No learning loop**, nothing built-in measures whether a remembered fact actually *helps*; nothing scores usefulness from session outcomes. Here, notes earn Q-value from the outcome the session's own transcript states in prose ("14 passed", "build failed"), which resolves on a minority of sessions (25 of 173 in the author's vault), and they decay when they stop contributing. The vault does not run tests: keying the reward on a tool runner's exit status is planned, not built (see 4.3).
 3. **No staleness handling**, no built-in mechanism notices that the code a memory describes has changed. Stale memory is *worse than no memory*; the unified layer git-diff-invalidates and re-verifies notes against the code they cite.
 4. **No observability**, even a working memory loop is invisible: you can't see what was injected, whether it helped, what got merged or invalidated. The dashboard makes the loop inspectable.
 
@@ -249,7 +249,7 @@ in your final summary so the reflector can capture it.
 |---|---|
 | Stale memory misleads the model | Git-diff invalidation → needs-review; "verify against code" framing; stale-rate tile with <5% target |
 | Context collapse / brevity bias | Incremental note ops only; merges keep richest detail |
-| Score gaming | Verifiable-outcome anchor; ΔQ cap ±0.15; clamp 0.05-0.95; Q-calibration check |
+| Score gaming | A note cannot set its own Q (every `q_value` line in reflector output is forced to 0.50, and a note with a duplicate frontmatter key is rejected); reward `r` is read only from the outcome the session transcript states, and an indeterminate session (about 85% of real ones) produces no Q update at all; contribution `c` is judged against the assistant's own output, not against the injected note text; ΔQ cap ±0.15 per session; clamp 0.05-0.95. NOT BUILT: the verifiable-outcome anchor. The vault never runs a test or a build, so a session that merely states "all tests pass" scores the same as one that ran them; keying `r` on the runner's exit status is planned (§4.3). The Q-calibration check is also not built: it is a planned eval metric (§6), not a running check. |
 | Vault noise growth | Reflector selectivity; dedupe-before-create; decay + 300-note cap |
 | Secrets leakage | Prompt prohibition + regex scan in enqueue/worker; private repo |
 | Token bloat | 2.5k-token injection budget, k=5; MCP pull opt-in |
@@ -262,7 +262,7 @@ in your final summary so the reflector can capture it.
 
 ## 9. References
 
-**Research:** ACE arxiv.org/abs/2510.04618 · MemRL arxiv.org/abs/2601.03192 · TAME arxiv.org/pdf/2602.03224 · IBM Trajectory Memory arxiv.org/pdf/2603.10600 · CODESKILL arxiv.org/html/2605.25430 · SCM arxiv.org/abs/2604.20943 · SleepGate arxiv.org/html/2603.14517v1 · A-MEM survey arxiv.org/pdf/2606.24937 · Letta letta.com/blog/agent-memory
+**Research:** ACE arxiv.org/abs/2510.04618 · MemRL arxiv.org/abs/2601.03192 · TAME arxiv.org/pdf/2602.03224 · IBM Trajectory Memory arxiv.org/pdf/2603.10600 · CODESKILL arxiv.org/html/2605.25430 · SCM arxiv.org/abs/2604.20943 · SleepGate arxiv.org/html/2603.14517v1 · A-MEM arxiv.org/abs/2502.12110 · Letta letta.com/blog/agent-memory
 
 **Tools:** claude-mem github.com/thedotmack/claude-mem · AutoDream (zenvanriel.com) · memsearch (milvus.io) · codebase-memory-mcp github.com/DeusData/codebase-memory-mcp · codegraph github.com/colbymchenry/codegraph · Graphify (dev.to) · Cipher/ByteRover · Mem0 docs.mem0.ai/integrations/claude-code · Neo4j create-context-graph · Graphiti github.com/getzep/graphiti
 

@@ -93,7 +93,7 @@ for (const t of titles) {
 console.log(`negatives: ${fp}/${negTotal} false positives (${(100 * fp / negTotal).toFixed(1)}%)  [target 0]`);
 console.log(titles.length
   ? `positives: ${hits}/${titles.length} notes retrievable by their own title   [target ${titles.length}]`
-  : 'positives: skipped (vault has no eligible notes yet)');
+  : 'positives: NO ELIGIBLE NOTES: this vault cannot retrieve anything, so the negative arm proves nothing');
 
 for (const [prompt, n] of [...leaks].sort((a, b) => b[1] - a[1]))
   console.log(`  LEAK x${n}: "${prompt}"`);
@@ -105,6 +105,11 @@ if (VERBOSE) for (const m of misses) console.log(`  MISS: ${m}`);
 if (leaks.size && [...leaks.values()].some(n => n < REPOS.length))
   console.log('\n  ^ leaks vary BY REPO: the cwd is entering the query again (see retrieve-prompt.mjs)');
 
-const ok = fp === 0 && (!titles.length || hits === titles.length);
+// An empty vault cannot retrieve anything, so every negative probe abstains for the most trivial
+// reason available and the run proves precisely nothing. That is not a pass, it is an absent test:
+// with the cwd-in-query bug deliberately put back, an empty vault STILL reports zero false positives
+// and exits 0. A green tick that cannot go red is worse than no tick, because it is trusted. Refuse
+// to score a vault that has nothing to retrieve.
+const ok = fp === 0 && titles.length > 0 && hits === titles.length;
 console.log(ok ? '\nRETRIEVAL OK' : '\nRETRIEVAL REGRESSION');
 process.exit(ok ? 0 : 1);

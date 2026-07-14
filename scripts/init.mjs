@@ -1,6 +1,7 @@
 // One-time setup: creates the vault directory (the user's data, separate from
-// this tool checkout), initializes it as its own git repo, and writes a starter
-// config.json next to the tool if none exists.
+// this tool checkout), initializes it as its own git repo, and writes a starter config.json at
+// CONFIG_PATH if none exists: that is ~/.unified-mem/config.json on a fresh install (it survives
+// plugin updates), or an existing in-checkout config.json for legacy manual installs.
 // Usage: node scripts/init.mjs   (vault location: UNIFIED_MEM_VAULT_DIR env,
 // then vault_dir in config.json, then ~/.unified-mem/vault)
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -78,5 +79,5 @@ vault ready: ${target}
 next steps:
   node scripts/seed.mjs         # optional: demo data to explore the dashboard (only on a fresh vault)
   node scripts/dashboard.mjs    # http://localhost:7777
-  add the three hooks from the README to ~/.claude/settings.json
+  add the four hooks from the README to ~/.claude/settings.json (SessionStart, UserPromptSubmit, SessionEnd, PreCompact)
   fill the repos map in config.json to enable staleness detection`);

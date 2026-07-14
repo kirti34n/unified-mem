@@ -26,8 +26,17 @@ jobs:
         run: node scripts/smoke.mjs
       # Retrieval precision, free and deterministic. Guards the failure the paid eval is blind to:
       # memory firing when it should not. It went unmeasured once and regressed silently.
+      # The fixture vault is not optional. With an empty vault nothing can be retrieved, so every
+      # probe abstains and this step passes by construction (verified: with the cwd-in-query bug
+      # put back, an empty vault still reports 0/40 false positives and exits 0). scripts/starter.mjs
+      # is not enough either: its notes carry `repos: []`, and the cwd leak is only visible on notes
+      # tagged with the repo being probed.
       - name: retrieval precision (no LLM, no spend)
-        run: node eval/negatives.mjs
+        env:
+          UNIFIED_MEM_VAULT_DIR: ${{ runner.temp }}/negvault
+        run: |
+          node eval/fixture-vault.mjs
+          node eval/negatives.mjs
       - name: zero dependencies, forever
         run: |
           node -e "const p=require('./package.json');const d=Object.keys(p.dependencies||{});if(d.length){console.error('dependencies found:',d);process.exit(1)}"

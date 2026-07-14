@@ -13,6 +13,31 @@ import { openDb, reindexNotes, NOTES_DIR } from './vault.mjs';
 // Final end-state content: q_value = end of the seeded trajectory; status matches the
 // metrics end-state; bodies are consistent with the seeded consolidation diffs.
 const DEMO_NOTES = {
+  // The loser of the seeded dedupe pair, and it stays ON DISK. That is the whole point: the engine
+  // does not merge duplicates and it does not delete them. The arbiter marks the loser superseded,
+  // writes a superseded_by pointer, and retrieval then serves the WINNER's content in the loser's
+  // slot. A demo that showed the duplicate vanishing would be showing a mechanism this system does
+  // not have, which is exactly what the old seeded "merge" row did.
+  '2026-06-18-redis-setnx-lock': `---
+id: 2026-06-18-redis-setnx-lock
+type: strategy
+title: Use SETNX for cross-instance locks
+entities: [redis]
+repos: [api-core]
+files: [src/lib/redlock.ts]
+source_commit: 9d4e7a1
+confidence: med
+q_value: 0.54
+access_count: 2
+last_used: 2026-06-18
+last_validated: 2026-06-18
+status: superseded
+superseded_by: 2026-05-26-redis-lock-pattern
+trust: demo
+links: []
+---
+**Pattern:** Use SETNX for locks.
+`,
   '2026-05-26-redis-lock-pattern': `---
 id: 2026-05-26-redis-lock-pattern
 type: strategy
@@ -27,6 +52,7 @@ access_count: 11
 last_used: 2026-07-06
 last_validated: 2026-06-22
 status: active
+supersedes: 2026-06-18-redis-setnx-lock
 trust: demo
 links: ["[[2026-05-27-jwt-refresh-race]]", "[[2026-06-17-ratelimit-redis-sliding]]"]
 ---
@@ -431,47 +457,44 @@ const DECAYS = [
 for (const [note, ts, dq] of DECAYS) { insQ.run(note, null, ts, q[note], q[note] + dq, null, null, 'decay'); q[note] += dq; }
 
 const CONSOLIDATIONS = [
-  ['2026-06-19T03:00:00', 'merge', LOCK,
-    'Merged near-duplicate 2026-06-18-redis-setnx-lock (similarity 0.91); kept richest detail, union entities, max Q',
-    `--- notes/2026/06/2026-06-18-redis-setnx-lock.md (duplicate, removed)
-+++ notes/2026/05/2026-05-26-redis-lock-pattern.md
--entities: [redis]
-+entities: [redis, concurrency]
--**Pattern:** Use SETNX for locks.
-+**Pattern:** For short critical sections spanning app instances, use a single-key Redis
-+SETNX lock (\`lock:<domain>:<id>\`) with PX TTL and a random token checked on release.
-+**Where it worked:** token refresh, webhook dedupe, cron leader election in worker-jobs.`],
-  ['2026-06-22T03:00:00', 'autolink', IDEM,
-    'Auto-linked to 2 notes: shared entities with 2026-06-09-kafka-consumer-rebalance (concurrency) and 2026-05-30-api-error-envelope (http)',
-    `--- notes/2026/06/2026-06-11-idempotency-keys-billing.md
-+++ notes/2026/06/2026-06-11-idempotency-keys-billing.md
--links: []
-+links: ["[[2026-05-30-api-error-envelope]]", "[[2026-06-09-kafka-consumer-rebalance]]"]`],
-  ['2026-06-25T03:00:00', 'coexist', RL,
-    'Arbiter: 2026-06-17-ratelimit-redis-sliding vs 2026-05-26-redis-lock-pattern classified COEXISTING (same tech, different problem), both kept',
+  ['2026-06-18T03:00:00', 'dedupe-candidate', LOCK,
+    'Possible near-duplicate pair: 2026-05-26-redis-lock-pattern|2026-06-18-redis-setnx-lock, review and merge manually (keep richest detail)',
     null],
-  ['2026-06-29T03:00:00', 'edit', JWT,
-    'Lock TTL updated 2 s to 5 s: p99 refresh latency grew past 2 s after the IdP region move (session s19)',
-    `--- notes/2026/05/2026-05-27-jwt-refresh-race.md
-+++ notes/2026/05/2026-05-27-jwt-refresh-race.md
--**Fix:** Redis SETNX lock keyed by user-id around refresh (commit 8f3ab21). 50 ms retry, 2 s TTL.
-+**Fix:** Redis SETNX lock keyed by user-id around refresh (commit 8f3ab21). 50 ms retry, 5 s TTL.
--last_validated: 2026-05-27
-+last_validated: 2026-06-29`],
-  ['2026-06-28T03:00:00', 'archive', WP,
-    'Q 0.11 < 0.20 and unused 14 days; Vite migration completed to archived',
-    `--- notes/2026/06/2026-06-14-legacy-webpack-alias.md
-+++ notes/2026/06/2026-06-14-legacy-webpack-alias.md
+  ['2026-06-19T03:00:00', 'dedupe-verdict', LOCK,
+    '2026-05-26-redis-lock-pattern|2026-06-18-redis-setnx-lock → DUPLICATE: NOTE A wins, it carries the TTL and release-token detail the other note lacks',
+    null],
+  ['2026-06-19T03:05:00', 'supersede', '2026-06-18-redis-setnx-lock',
+    '2026-06-18-redis-setnx-lock superseded by 2026-05-26-redis-lock-pattern (DUPLICATE)',
+    `--- notes/2026/06/2026-06-18-redis-setnx-lock.md
++++ notes/2026/06/2026-06-18-redis-setnx-lock.md
 -status: active
-+status: archived
-+**Superseded:** Vite migration finished 2026-07-01; alias removed with webpack.config.js.`],
++status: superseded
++superseded_by: 2026-05-26-redis-lock-pattern`],
+  ['2026-06-22T03:00:00', 'autolink', null,
+    'Added 2 wikilinks (co-file and shared-entity edges)',
+    null],
+  // COEXISTING is a dedupe-verdict, not an op of its own. There is no 'coexist' op: the arbiter's
+  // three outcomes all land in the SAME row type, and COEXISTING is simply the one that then does
+  // nothing, which is the common case in practice. Showing it as its own operation implied the
+  // nightly job performs a "coexist" action. It does not; it declines to act.
+  ['2026-06-24T03:00:00', 'dedupe-candidate', RL,
+    'Possible near-duplicate pair: 2026-05-26-redis-lock-pattern|2026-06-17-ratelimit-redis-sliding, review and merge manually (keep richest detail)',
+    null],
+  ['2026-06-25T03:00:00', 'dedupe-verdict', RL,
+    '2026-05-26-redis-lock-pattern|2026-06-17-ratelimit-redis-sliding → COEXISTING: both use Redis, but one is a mutual-exclusion lock and the other is a sliding-window rate limiter; they answer different questions and neither supersedes the other, so both are kept',
+    null],
+  ['2026-06-28T03:00:00', 'archive', WP,
+    'Q 0.11 < 0.20 and unused 76 days, archived',
+    `--- notes/2026/04/2026-04-13-legacy-webpack-alias.md
++++ notes/2026/04/2026-04-13-legacy-webpack-alias.md
+-status: active
++status: archived`],
   ['2026-07-02T03:00:00', 'invalidate', PG,
-    'src/db/reports.ts changed since last_validated (commit b41c9de) to status: needs-review',
+    'Files changed since last_validated (2026-07-01) to needs-review. Commits:\napi-core/src/db/reports.ts:\nb41c9de rewrite the report filter builder',
     `--- notes/2026/07/2026-07-01-pg-jsonb-index.md
 +++ notes/2026/07/2026-07-01-pg-jsonb-index.md
 -status: active
-+status: needs-review
-+**Needs review:** src/db/reports.ts changed after this was written (commit b41c9de); verify the filter builder still uses \`@>\`.`],
++status: needs-review`],
   ['2026-07-03T03:00:00', 'verify', ENV,
     'needs-review check passed: httpError() unchanged at HEAD, envelope shape intact to restored to active',
     `--- notes/2026/05/2026-05-30-api-error-envelope.md

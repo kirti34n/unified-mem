@@ -25,7 +25,15 @@ function state() {
       const m = db.prepare('SELECT SUM(stale_retrievals) s, SUM(retrievals) r FROM metrics_daily').get();
       return m.r ? m.s / m.r : 0;
     })(),
-    abstention_rate: (() => {
+    // NOT an abstention rate. This counts real sessions that hold no injection row, and on the
+    // author's vault every one of those is a transcript the worker queued without the retrieval
+    // hook ever having run on it (worker.mjs inserts a placeholder sessions row for it). Session
+    // start does not abstain: its similarity floor cannot reject rank 1, because BM25 is
+    // normalized against the best hit. Real abstention lives on the per-prompt path and is
+    // measured by eval/negatives.mjs, not here. Null (not 0) when there is nothing to measure,
+    // so a seed-only vault does not print a confident 0%.
+    real_sessions: db.prepare('SELECT COUNT(*) c FROM sessions WHERE demo=0').get().c,
+    no_injection_rate: (() => {
       const s = db.prepare('SELECT COUNT(*) c FROM sessions WHERE demo=0').get().c;
       // Join against sessions, not a bare DISTINCT count: a prompt-only injection
       // (retrieve-prompt.mjs) can log an injection for a session_id that never got
@@ -34,7 +42,12 @@ function state() {
       // and push this rate negative.
       const w = db.prepare(`SELECT COUNT(DISTINCT i.session_id) c FROM injections i
         JOIN sessions s ON s.id = i.session_id WHERE i.demo=0 AND s.demo=0`).get().c;
-      return s ? Math.max(0, s - w) / s : 0;
+      return s ? Math.max(0, s - w) / s : null;
+    })(),
+    demo_rows: (() => {
+      const c = t => db.prepare(`SELECT COUNT(*) c FROM ${t} WHERE demo=1`).get().c;
+      return c('sessions') + c('injections') + c('q_history') + c('consolidations') + c('metrics_daily')
+        + db.prepare(`SELECT COUNT(*) c FROM notes WHERE trust='demo'`).get().c;
     })(),
     gaps: (() => {
       try { return readFileSync(join(VAULT, 'index', 'gaps.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length; }

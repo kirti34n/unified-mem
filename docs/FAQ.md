@@ -73,11 +73,19 @@ Only note files are tracked; the SQLite index, queue, and cost ledger are rebuil
 
 ## Windows notes
 
-Built and tested on Windows 11 (with Git Bash present). Hook commands use forward slashes and quoted absolute paths, which work across platforms. On Windows, `init.mjs` registers the `UnifiedMemWorker` daily task for you (see the scheduling question above). If you want to schedule the two jobs by hand instead, the Task Scheduler equivalents of the cron lines above (note the inner script path is quoted so it survives spaces in the checkout path, and `node` must be on the PATH of the account the task runs as, the interactive user by default):
+Built and tested on Windows 11 (with Git Bash present). Hook commands use forward slashes and quoted absolute paths, which work across platforms. On Windows, `init.mjs` registers a single daily `UnifiedMemWorker` task that runs the worker and then the nightly job (see the scheduling question above).
+
+**Do not also schedule the jobs by hand.** An earlier version of this page recommended a separate `unified-mem-dream` task for `consolidate.mjs`, and anyone who ran `init.mjs` and also followed that advice ended up running the nightly job twice at 03:00. That is not merely wasted money (it is, and it doubles the paid arbiter and verification calls): under concurrency the two-strike rule that protects a note from a single cheap-model misjudgment degrades to one strike, because the second process sees the first one's strike and takes the archive branch. It happened on the author's machine, and it is why `consolidate.mjs` now takes a single-writer lock. Nothing reaps the old task automatically, so if you are carrying it, remove it:
 
 ```
-schtasks /Create /SC HOURLY /TN unified-mem-worker /TR "node \"C:\path\to\unified-mem\scripts\worker.mjs\""
-schtasks /Create /SC DAILY /ST 03:00 /TN unified-mem-dream /TR "node \"C:\path\to\unified-mem\scripts\consolidate.mjs\""
+schtasks /delete /tn unified-mem-dream /f
+schtasks /delete /tn unified-mem-worker /f
+```
+
+If you would rather schedule by hand than use `init.mjs`, register exactly one task and have it run the two scripts in sequence, so they can never overlap (`node` must be on the PATH of the account the task runs as, the interactive user by default):
+
+```
+schtasks /Create /SC DAILY /ST 03:00 /TN UnifiedMemWorker /TR "cmd /c node \"C:\path\to\unified-mem\scripts\worker.mjs\" && node \"C:\path\to\unified-mem\scripts\consolidate.mjs\""
 ```
 
 Run tests with plain `node --test` (auto-discovery): passing the directory as an argument misbehaves on Windows.

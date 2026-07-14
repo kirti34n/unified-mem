@@ -101,18 +101,32 @@ try {
     out += `\nTHIS REPO, what is there and what is happening:\n${card.replace(/^# .*\r?\n/, '').trim().slice(0, 1400)}\n`;
   } catch { /* no card yet for this repo */ }
 
-  // Relevance floor: injecting nothing beats injecting noise. A note must be
-  // meaningfully relevant (sim >= start_min_sim, one shared token is not enough)
-  // or have PROVEN high utility (q>=0.7) to ride along with the catalog.
+  // Similarity floor (start_min_sim) plus a utility bypass (q>=0.7). Read the floor for exactly
+  // what it is, because the name oversells it. On the normal path (FTS5 present) ftsSim
+  // normalizes BM25 against the BEST hit, so the top-matching note always scores sim = 1.0
+  // however weak its absolute match. The floor therefore CANNOT reject rank 1; it only trims the
+  // tail below it. Only in the FTS5-missing fallback, where sim is an absolute keyword overlap,
+  // can the floor reject rank 1 at all.
+  // Measured on the 55-note vault this was written against: a cwd of "some-unknown-repo" (a path
+  // that is not a git repo and is named in no note) still injects 5 notes, the full k, with rank 1
+  // won on ONE generic shared token. So one shared token IS enough, and session start does NOT
+  // abstain on a weak query. The per-prompt path (retrieve-prompt.mjs) is the one with a real
+  // precision gate (>=2 rare terms shared with the note); this path has none (see docs/ROADMAP.md).
+  // q>=0.7 is not proof of usefulness either: Q is a slow prior nudged by a reward that
+  // detectOutcome regex-reads off the transcript tail, and it resolves on roughly 15% of sessions.
   // demo-seeded notes never ride the utility bypass into real sessions
   // trust:demo is excluded from EVERY injection path here, not just the utility
   // bypass: fictional seed content must never ride into a real session via a plain
   // similarity match either, or the catalog reads as real cross-repo knowledge.
-  // Split by polarity FIRST, then adaptiveCut each group on its OWN score cliff, so a
-  // pitfall is never suppressed just because guidance notes scored higher (which would
-  // silently drop the whole "do NOT repeat" block). adaptiveCut trims weak sim-matches
-  // only; a note admitted for PROVEN utility (q>=0.7 but sim below the floor) is exempt
-  // and always kept, so the cliff cut cannot cancel the deliberate utility bypass.
+  // Split by polarity FIRST so a pitfall gets its own block instead of competing with guidance
+  // notes for one list (which would silently drop the whole "do NOT repeat" section).
+  // Honesty note: adaptiveCut does NOT trim anything here today. It cuts only on a >=50% relative
+  // score drop, but scoreNotes() has already truncated the pool to the top CONFIG.k notes and every
+  // note in that pool carries a large similarity-independent floor (q + recency + validity), so no
+  // adjacent pair halves (measured on the live vault: 0 cuts across real query groups, largest
+  // adjacent drop about 0.42). trim() is therefore an identity function as written (see
+  // docs/ROADMAP.md: retire or fix adaptiveCut). The utility bypass (q>=0.7, sim below the floor)
+  // is held out of the call regardless, so it always survives.
   const passing = resolveSupersessions(db, scoreNotes(db, query))
     .filter(n => n.trust !== 'demo' && (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id) && n.type !== 'preference');
   const trim = notes => {
