@@ -27,9 +27,17 @@ const DEFAULTS = {
 // config.json lives in a stable home dir (~/.unified-mem) so it survives plugin
 // updates, which replace the ephemeral plugin install dir. A legacy in-checkout
 // config.json is still honored, so existing manual installs keep working unchanged.
-export const CONFIG_PATH = existsSync(join(ROOT, 'config.json'))
-  ? join(ROOT, 'config.json')
-  : join(homedir(), '.unified-mem', 'config.json');
+//
+// UNIFIED_MEM_CONFIG overrides it, and it exists for one reason: improve.mjs REWRITES this file,
+// and it resolves from ROOT rather than from VAULT, so UNIFIED_MEM_VAULT_DIR alone does NOT isolate
+// it. Without this override a test that exercises the improve loop would write to the real user's
+// live config and, if it were interrupted between the write and the rollback, leave it mutated. A
+// test harness must never be able to do that.
+export const CONFIG_PATH = process.env.UNIFIED_MEM_CONFIG
+  ? resolve(process.env.UNIFIED_MEM_CONFIG)
+  : existsSync(join(ROOT, 'config.json'))
+    ? join(ROOT, 'config.json')
+    : join(homedir(), '.unified-mem', 'config.json');
 export function loadConfig() {
   // weights is deep-merged: a config that hand-tunes only one weight (e.g. {"sim":0.6})
   // must not leave the other three undefined, which silently turns every score into NaN.
@@ -378,6 +386,155 @@ export function resolveSupersessions(db, notes, maxHops = 4) {
     out.push(cur);
   }
   return out;
+}
+
+// THE PRECISION GATE. This is the only mechanism in this codebase that can actually REJECT a
+// candidate. A similarity floor provably cannot: ftsSim normalizes BM25 against the BEST hit, so
+// the top note always scores sim = 1.0 however weak its absolute match, and no floor below 1.0 can
+// reject rank 1. start_min_sim / prompt_min_sim only trim the tail.
+//
+// It lives here, not in a hook, because BOTH hooks need the identical rule. retrieve-prompt.mjs
+// used to own the only copy, and that is exactly why retrieve.mjs shipped with no gate at all.
+//
+// A term is evidence only if it is BOTH rare (df <= 30% of notes: in a vault of fixes, "fix",
+// "load" and "session" sit in most notes and carry zero signal) AND longer than 4 chars. The length
+// floor is load-bearing, not decoration: by document frequency alone a short word that happens to
+// sit in two notes ("one", "blue", "day") looks exactly as discriminative as a real technical
+// token, and two of those were enough to make chatty prompts inject.
+//
+// HIT COUNT, NEVER A RATIO. The session-start query is git-derived and long (50 to 605 terms across
+// the registered repos on the author's machine), so a coverage ratio (shared rare terms / query
+// terms) collapses to about 0.01 and abstains on EVERYTHING: a prior session-start gate did exactly
+// that and took a real repo to zero recall. Two rare terms is two rare terms whether the query
+// carries ten of them or six hundred.
+//
+// KNOWN WEAKNESS, and it bounds what may be built on this. The gate cannot tell "rare because it is
+// technical evidence" from "rare because this vault is about software and this is an ordinary
+// English word". The probe "i cannot decide between the blue shirt or the green one today" yields
+// rare terms {cannot, between, green, today}: all four clear the length floor. It holds on the
+// prompt path only because that path's candidate pool is tiny (k=2) and BM25 already vouched for
+// those two notes. Widening THAT pool leaks (measured: eval/negatives.mjs goes 0 -> 14 false
+// positives), which is why only retrieve.mjs over-fetches: its query is git vocabulary, not English
+// prose.
+export function rarityGate(db, terms) {
+  const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
+  const dfCap = Math.max(2, total * 0.3);
+  const df = docFreq(db, terms); // FTS5 when present, else a notes-table scan: identical gate on any Node
+  return {
+    df,
+    rare: new Set(terms.filter(t => t.length > 4 && df.get(t) > 0 && df.get(t) <= dfCap)), // usable evidence
+    novel: terms.filter(t => df.get(t) === 0 && t.length > 4), // vault has never seen these: the gap signal
+  };
+}
+// Rare query terms a note actually CONTAINS. repos and files are deliberately NOT part of the note
+// text here: every note tagged `repos: [foo]` trivially contains "foo", so counting them would hand
+// each note a free hit inside its own repo and reopen the very cwd-name leak this gate exists to
+// close. Title, entities, body and triggers are the note's own claim about itself.
+export const rareHits = (n, rare) =>
+  tokenize([n.title, n.entities, n.body, n.triggers].join(' ')).filter(w => rare.has(w)).length;
+// One threshold, both hooks, both sides of the gate: a query needs >= 2 rare terms to retrieve at
+// all, and a note needs >= 2 of them to win a slot. It is 2 because 2 is the value pinned at zero
+// false positives by eval/negatives.mjs. Raising it to 3 starts eating real recall.
+export const MIN_RARE_HITS = 2;
+
+// LINK GRAPH, READ AT INJECTION TIME. consolidate.mjs has always written wikilinks into every note
+// (co-file and shared-entity edges, plus ids the reflector asserts by hand) and NO retrieval path
+// has ever read them back: the graph was dashboard decoration. This returns them as POINTERS
+// (title + why the edge exists), never as content. Injecting the neighbour BODIES would expand the
+// result set, and our measured defect is precision, not recall, so the bodies deliberately stay
+// out: the model pulls a neighbour through vault_search or it does not pull it at all.
+//
+// Three things the live vault forced into this function:
+//  - INLINKS. The autolink cap (4 per note) is applied per SOURCE note, so the underlying relation
+//    is symmetric but the STORED edges are not: 11 of 65 live edge-ends are one-way and two notes
+//    have inlinks ONLY. Reading n.links alone is half-blind, so the reverse map is rebuilt here
+//    from one id/title/links/files/entities scan (no bodies: 55 notes cost under a millisecond).
+//  - DANGLING TARGETS. `links` is not only machine-written: the reflector emits ids of its own and
+//    gets them wrong. 3 of the 12 hand-written edges in the live vault point at ids that do not
+//    exist (two dropped the date prefix, one is a concept phrase, not an id). An id that resolves
+//    to no note is dropped here, so a hallucinated edge can never reach a session.
+//  - THE REASON. A bare neighbour title reads as a relevance CLAIM ("this is also relevant"), and
+//    for a co-file edge that claim is often false: scripts/vault.mjs links the SQLITE_BUSY note to
+//    the trust-tier note, same file, unrelated fact. The reason ("same file prism.py") is a FACT
+//    instead, it cannot be wrong, and it hands the judgement to the model. It is recomputed from
+//    the two notes rather than stored, so an edge whose justification has since evaporated degrades
+//    to a plain "linked" instead of asserting a file the two notes no longer share.
+//
+// SUPERSEDED notes are excluded, and this is the sharpest edge on the whole feature. The arbiter's
+// verdict is EXECUTED: retrieval never serves a superseded note, resolveSupersessions swaps the
+// winner's body into the loser's slot. But a pointer would route AROUND that, because the model
+// acts on it by calling vault_search, and vault_search (mcp-server.mjs) calls scoreNotes directly:
+// no resolveSupersessions, and it flags only needs-review, not superseded. So a superseded
+// neighbour would be served as stale content with NO warning at all. Excluded in both directions
+// (as a neighbour and as a source of inlinks). needs-review notes DO stay: they are still
+// retrieved, still the best thing we know, and vault_search does flag them.
+//
+// Preferences are excluded at BOTH ends: they are pinned into every session anyway, and a
+// preference has no related work. The live vault shows why the autolinker cannot be trusted here:
+// the "no em/en dashes" preference is linked to an FFmpeg palette note because both carry the
+// entities readme + docs.
+//
+// `exclude` is the ids already injected or about to be: pointing at a note whose body is already in
+// the same block is pure waste.
+export function linkNeighbours(db, notes, exclude = new Set(), max = 3) {
+  if (!notes.length) return new Map();
+  const csvOf = s => (s || '').split(',').map(x => x.trim()).filter(Boolean);
+  // an edge is stored as "[[id]]" (autolink) or as a bare id (reflector): strip either shape
+  const idsOf = s => (s || '').split(',').map(x => x.replace(/[[\]"']/g, '').trim()).filter(Boolean);
+  const all = db.prepare("SELECT id,title,links,files,entities FROM notes WHERE status NOT IN ('archived','superseded') AND trust != 'demo' AND type != 'preference'").all();
+  const byId = new Map(all.map(r => [r.id, r]));
+  const inTo = new Map(); // reverse index (target id -> source ids): the half the frontmatter lacks
+  for (const r of all)
+    for (const t of idsOf(r.links)) {
+      if (t === r.id || !byId.has(t)) continue;
+      if (!inTo.has(t)) inTo.set(t, []);
+      inTo.get(t).push(r.id);
+    }
+  const out = new Map();
+  for (const n of notes) {
+    if (n.type === 'preference') continue;
+    const myFiles = new Set(csvOf(n.files)), myEnts = new Set(csvOf(n.entities));
+    const rows = [];
+    for (const id of new Set([...idsOf(n.links), ...(inTo.get(n.id) || [])])) {
+      const o = byId.get(id);
+      if (!o || id === n.id || exclude.has(id)) continue;
+      const sf = csvOf(o.files).filter(f => myFiles.has(f));
+      const se = csvOf(o.entities).filter(e => myEnts.has(e));
+      // tiers mirror the autolinker's own edge strengths: a shared FILE is its strong edge, >= 2
+      // shared entities its medium one, and what is left is an edge the reflector asserted with no
+      // mechanical justification we can see. That last kind is often the BEST one, but it is also
+      // the only kind that can be a hallucination, so it sorts last and claims only what it can
+      // defend.
+      rows.push({
+        id, title: o.title, tier: sf.length ? 0 : se.length >= 2 ? 1 : 2, shared: se.length,
+        reason: sf.length ? `same file ${sf[0]}` : se.length >= 2 ? `shares ${se.slice(0, 2).join(', ')}` : 'linked',
+      });
+    }
+    // id breaks ties so the same query twice yields byte-identical injected text; a reshuffle would
+    // invalidate the model's prompt cache for nothing.
+    rows.sort((a, b) => a.tier - b.tier || b.shared - a.shared || (a.id < b.id ? -1 : 1));
+    if (rows.length) out.set(n.id, rows.slice(0, max));
+  }
+  return out;
+}
+
+// One line, appended under an injected note's body. The cap is on CHARACTERS, not on the neighbour
+// count, because chars are what is actually paid, and they are paid out of the SAME budget as the
+// note bodies. Whole entries only, never a half-printed title: the title IS the handle (vault_search
+// takes free text, not an id, and eval/negatives.mjs already pins that every note is retrievable by
+// its own title), so a truncated one is not actionable. Printing the id as well would cost about 40
+// chars per neighbour and buy the model nothing it can act on.
+export function relatedLine(neighbours, maxChars = 280) {
+  if (!neighbours?.length) return '';
+  const parts = [];
+  let used = 0;
+  for (const n of neighbours) {
+    const part = `"${n.title}" (${n.reason})`;
+    if (used + part.length > maxChars) break;
+    used += part.length + 2; // + the '; ' this entry will be joined with
+    parts.push(part);
+  }
+  return parts.length ? `Related, not shown, pull with vault_search if the answer is not here: ${parts.join('; ')}\n` : '';
 }
 
 // Adaptive-k, currently INERT: it does not cut on real data, callers get the full top-k.

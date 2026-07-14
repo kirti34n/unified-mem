@@ -11,6 +11,7 @@ import { tmpdir, hostname } from 'node:os';
 process.env.UNIFIED_MEM_VAULT_DIR = mkdtempSync(join(tmpdir(), 'umem-test-'));
 const {
   parseNote, tokenize, scoreNotes, adaptiveCut, resolveSupersessions, detectOutcome, makeDiff, updateNoteFile,
+  rarityGate, rareHits, linkNeighbours, relatedLine,
   validateNote, duplicateFrontmatterKey, docFreq, reindexNotes, openDb, FTS5_OK, SECRET_RE, NOTES_DIR, CONFIG,
   looksLikePromptInjection,
   buildTranscripts,
@@ -444,6 +445,89 @@ test('docFreq: triggers content counts toward document frequency', () => {
   assert.ok(df.get('zorblatt') >= 1);
   const dfNoFts = docFreq(db, ['zorblatt'], false);
   assert.ok(dfNoFts.get('zorblatt') >= 1);
+});
+
+// ---- The shared precision gate (rarityGate/rareHits): the only mechanism here that can REJECT ----
+
+test('rarityGate: only long AND rare terms are evidence, and it counts hits, never a ratio', () => {
+  reindexNotes(db);
+  const { rare, novel } = rarityGate(db, ['zorblatt', 'the', 'blue', 'quetzalcoatlus']);
+  assert.ok(rare.has('zorblatt'));             // long, rare: real evidence
+  // 4 chars: by document frequency alone a short word can look maximally discriminative, and short
+  // words are exactly what leaked chatty prompts, so the length floor must exclude them however
+  // rare they are.
+  assert.ok(!rare.has('blue'));
+  assert.ok(!rare.has('the'));
+  assert.ok(novel.includes('quetzalcoatlus')); // never seen: a gap signal, not evidence FOR a note
+  assert.ok(!rare.has('quetzalcoatlus'));
+  // THE RATIO TRAP, pinned. Padding the query with 200 junk terms must not dilute the gate. A
+  // coverage ratio would collapse to about 0.005 here and abstain on everything; a hit COUNT is
+  // unmoved. That is the exact failure that took a real repo to zero recall at session start, where
+  // the git-derived query runs to hundreds of terms.
+  const padded = ['zorblatt', ...Array.from({ length: 200 }, (_, i) => `junkterm${i}`)];
+  assert.ok(rarityGate(db, padded).rare.has('zorblatt'));
+  assert.equal(rarityGate(db, padded).rare.size, 1);
+});
+
+test('rareHits: counts the note own text, never its repos/files tag', () => {
+  const rare = new Set(['zorblatt', 'billing']);
+  // repos/files are excluded on purpose: every note tagged repos [foo] trivially contains foo, so
+  // counting them would hand each note a free hit inside its own repo and reopen the cwd-name leak.
+  const n = { title: 'zorblatt tuning', entities: '', body: 'about zorblatt', triggers: '', repos: 'billing', files: 'billing.js' };
+  assert.equal(rareHits(n, rare), 1);
+  assert.equal(rareHits({ title: '', entities: '', body: '', triggers: '' }, rare), 0);
+});
+
+// ---- The link graph, read at injection time ----
+// consolidate.mjs writes it and, until linkNeighbours existed, nobody read it back. These pin the
+// properties that make it safe to inject a pointer to it. Every one is a defect found in the live
+// vault, not a hypothetical.
+
+test('linkNeighbours: inlinks, dangling targets, preferences, superseded, and the stated reason', () => {
+  writeFileSync(join(noteDir, '2026-01-30-linksrc.md'),
+    '---\nid: 2026-01-30-linksrc\ntype: recovery\ntitle: flurbotron overheats on cold start\nentities: [flurbotron, windows]\nrepos: [demo]\nfiles: [src/flurb.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: ["[[2026-01-31-linkfile]]", "[[2026-01-99-does-not-exist]]"]\n---\nThe flurbotron overheats.\n');
+  // shares a FILE with linksrc: the strong edge, and it must name the file it shares
+  writeFileSync(join(noteDir, '2026-01-31-linkfile.md'),
+    '---\nid: 2026-01-31-linkfile\ntype: recovery\ntitle: flurbotron cooling loop\nentities: [cooling]\nrepos: [demo]\nfiles: [src/flurb.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nCooling loop.\n');
+  // links TO linksrc and is not linked FROM it: reachable only via the reverse index, which is the
+  // half the frontmatter does not carry (the autolink cap is applied per SOURCE note)
+  writeFileSync(join(noteDir, '2026-01-32-linkback.md'),
+    '---\nid: 2026-01-32-linkback\ntype: recovery\ntitle: flurbotron backlink note\nentities: [flurbotron, windows]\nrepos: [demo]\nfiles: [other.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: ["[[2026-01-30-linksrc]]"]\n---\nBacklink.\n');
+  // a preference must never appear as a neighbour: it is pinned into every session anyway
+  writeFileSync(join(noteDir, '2026-01-33-linkpref.md'),
+    '---\nid: 2026-01-33-linkpref\ntype: preference\ntitle: pref note\nentities: [flurbotron, windows]\nrepos: [demo]\nfiles: [src/flurb.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\ntrust: user-explicit\nlinks: ["[[2026-01-30-linksrc]]"]\n---\nA preference.\n');
+  // SUPERSEDED must never be advertised. The model acts on a pointer by calling vault_search, and
+  // vault_search does not resolve supersessions and does not flag them, so it would hand back the
+  // retired body with no warning at all.
+  writeFileSync(join(noteDir, '2026-01-34-linkdead.md'),
+    '---\nid: 2026-01-34-linkdead\ntype: recovery\ntitle: flurbotron stale advice\nentities: [flurbotron, windows]\nrepos: [demo]\nfiles: [src/flurb.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: superseded\nsuperseded_by: 2026-01-31-linkfile\nlinks: ["[[2026-01-30-linksrc]]"]\n---\nStale.\n');
+  reindexNotes(db);
+  const src = db.prepare('SELECT * FROM notes WHERE id=?').get('2026-01-30-linksrc');
+  const got = linkNeighbours(db, [src]).get('2026-01-30-linksrc');
+  assert.deepEqual(got.map(n => n.id), ['2026-01-31-linkfile', '2026-01-32-linkback'],
+    'outlink + INLINK; dangling, preference and SUPERSEDED all dropped; shared-file edge ranked first');
+  assert.equal(got[0].reason, 'same file src/flurb.ts');
+  assert.equal(got[1].reason, 'shares flurbotron, windows');
+  // exclude: a note whose body is already in the same injected block is not worth pointing at
+  assert.equal(linkNeighbours(db, [src], new Set(['2026-01-31-linkfile']))
+    .get('2026-01-30-linksrc').map(n => n.id).join(), '2026-01-32-linkback');
+  // a preference as the SOURCE gets no pointer line either: it has no related work
+  const pref = db.prepare('SELECT * FROM notes WHERE id=?').get('2026-01-33-linkpref');
+  assert.equal(linkNeighbours(db, [pref]).size, 0);
+});
+
+test('relatedLine: empty for no neighbours, whole entries only, hard char cap', () => {
+  assert.equal(relatedLine(undefined), '');
+  assert.equal(relatedLine([]), '');
+  const long = { id: 'a', title: 'x'.repeat(200), reason: 'linked' };
+  const short = { id: 'b', title: 'short one', reason: 'linked' };
+  assert.match(relatedLine([short]), /^Related, not shown, pull with vault_search if the answer is not here: "short one" \(linked\)\n$/);
+  // the second entry does not fit under the cap and is dropped WHOLE: a truncated title is not a
+  // usable vault_search handle, so a half-printed one is worse than an absent one
+  const line = relatedLine([long, short], 220);
+  assert.ok(line.includes('x'.repeat(200)));
+  assert.ok(!line.includes('short one'));
+  assert.equal(relatedLine([long], 10), ''); // nothing fits: no line at all, not a dangling header
 });
 
 // ---- Memento adoptions: polarity, adaptive-k ----

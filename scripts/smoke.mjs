@@ -4,7 +4,7 @@
 // path a NO_CAPTURE-only smoke was structurally blind to.
 // Distinct session ids per step: session-start injects notes the per-prompt
 // path would then correctly dedupe.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -153,5 +153,35 @@ r = run(['-e',
 ], null, envCapture);
 if (r.status !== 0) fail('capture path must log injections', r);
 
+// The improve loop, end to end, for $0. It is the one script that could never be tested, because
+// every real iteration spends money on `claude -p`, and that is exactly why a ReferenceError lived
+// in its accept path: `accepted` was used three times and declared nowhere, so an accept threw, the
+// try swallowed it as "eval failed", and the final summary threw again uncaught. The loop had never
+// accepted a knob. UNIFIED_MEM_FAKE_EVAL swaps in a deterministic synthetic evaluator whose scores
+// are rigged to force one ACCEPT and one REVERT, so both branches and the final summary all run.
+// It must also leave config.json alone: dry-run is the default, and a loop that silently rewrites
+// the user's live config is the original sin this guard exists to prevent.
+// UNIFIED_MEM_CONFIG is mandatory here, not tidiness: improve.mjs rewrites config.json, and
+// CONFIG_PATH resolves from the CHECKOUT, not from UNIFIED_MEM_VAULT_DIR. Without the override this
+// smoke would write to the real user's live config.
+const cfgPath = join(vault, 'config.json');
+writeFileSync(cfgPath, JSON.stringify({ weights: { sim: 0.40, q: 0.30, recency: 0.15, validity: 0.15 }, k: 5 }, null, 2));
+const cfgBefore = readFileSync(cfgPath, 'utf8');
+// --demo satisfies improve.mjs's own refusal to tune production config against the fictional
+// question set. That guard is correct and stays: the public checkout ships no questions.real.json,
+// so without the flag this step fails there and in CI. It is moot here anyway, because
+// UNIFIED_MEM_FAKE_EVAL means no question file is ever read.
+// --runs 3 satisfies improve.mjs's OTHER pre-flight guard (it refuses to decide on fewer than 14
+// planned samples, and the demo set is 5 questions, so 5 x 2 = 10 is short). Both guards are real
+// and both stay; the smoke satisfies them rather than bypassing them, because a test that has to
+// disable a safety check to pass is testing the wrong thing.
+r = run(['scripts/improve.mjs', '--iterations', '2', '--demo', '--runs', '3'], null,
+  { ...env, UNIFIED_MEM_FAKE_EVAL: '1', UNIFIED_MEM_CONFIG: cfgPath });
+if (r.status !== 0) fail('improve loop must run end to end (accept + revert) without throwing', r);
+if (!/ACCEPT/i.test(r.stdout)) fail('improve loop must exercise the ACCEPT path (it never has)', r);
+if (!/REVERT/i.test(r.stdout)) fail('improve loop must exercise the REVERT path', r);
+if (readFileSync(cfgPath, 'utf8') !== cfgBefore)
+  fail('improve loop is dry-run by default: it must NOT rewrite config.json without --apply', r);
+
 rmSync(vault, { recursive: true, force: true });
-console.log('SMOKE OK: seed, demo-only injects nothing, catalog excludes demo repos, demo trust gate (pin + sim/bypass), real-note relevant injection, pitfall AVOID block, chatty abstention, in-repo off-topic abstention (cwd not in query), pinning, capture logging');
+console.log('SMOKE OK: seed, demo-only injects nothing, catalog excludes demo repos, demo trust gate (pin + sim/bypass), real-note relevant injection, pitfall AVOID block, chatty abstention, in-repo off-topic abstention (cwd not in query), pinning, capture logging, improve loop (accept + revert, config untouched)');

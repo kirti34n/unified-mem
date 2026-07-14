@@ -12,7 +12,7 @@
 // Never blocks; any failure exits 0.
 import { readFileSync, appendFileSync, writeFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { openDb, scoreNotes, adaptiveCut, resolveSupersessions, tokenize, docFreq, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, adaptiveCut, rarityGate, rareHits, MIN_RARE_HITS, linkNeighbours, relatedLine, resolveSupersessions, tokenize, hookDebugLog, CONFIG, VAULT } from './vault.mjs';
 
 try {
   if (process.env.MEMORY_OFF === '1') process.exit(0);
@@ -36,9 +36,9 @@ try {
   // "session" appear in most notes and carry zero signal. Only query terms present
   // in <=30% of notes count as evidence, and a note must contain >=2 of them.
   // A chatty prompt with no rare technical terms therefore injects NOTHING.
-  const total = db.prepare('SELECT COUNT(*) c FROM notes').get().c || 1;
-  const dfCap = Math.max(2, total * 0.3);
-  const df = docFreq(db, terms); // FTS5 when available, else a notes-table scan (same gate on any Node)
+  // The gate itself now lives in vault.mjs (rarityGate), so retrieve.mjs applies the IDENTICAL
+  // rule instead of a second copy of it, which is how the session-start path came to have no gate
+  // at all. The 30%-of-notes df cap and the docFreq call (FTS5, else a notes-table scan) are inside it.
   // The length floor mirrors the one `novel` already applies, and it is what makes the gate
   // hold on ordinary English. Document frequency alone cannot: a short common word that
   // happens to sit in only a couple of notes ("one", "blue", "day") looks exactly as
@@ -46,8 +46,8 @@ try {
   // chatty prompt injects. Measured on the live vault: 3 of 20 off-topic prompts leaked in
   // every repo (15.0% of 300 negative probes) purely on short words. A term has to be both
   // rare AND substantial to count as evidence.
-  const rare = new Set(terms.filter(t => t.length > 4 && df.get(t) > 0 && df.get(t) <= dfCap)); // rare AND substantial: usable evidence
-  const novel = terms.filter(t => df.get(t) === 0 && t.length > 4);               // vault has never seen these: the strongest gap signal
+  const { rare, novel } = rarityGate(db, terms); // rare: usable evidence, one copy of the rule, shared with retrieve.mjs
+  // novel = terms the vault has never seen: the strongest gap signal, logged (not injected) below.
   const logGap = () => {
     if (process.env.UNIFIED_MEM_NO_CAPTURE === '1') return;
     try {
@@ -72,7 +72,7 @@ try {
       }
     } catch { }
   };
-  if (rare.size < 2) {
+  if (rare.size < MIN_RARE_HITS) {
     if (novel.length >= 3) logGap(); // technical prompt about something the vault knows nothing about
     process.exit(0);
   }
@@ -90,7 +90,7 @@ try {
   // WINNER's own text is what has to earn the slot.
   const passing = resolveSupersessions(db, scoreNotes(db, terms, k + seen.size))
     .filter(n => !seen.has(n.id) && n.sim >= CONFIG.prompt_min_sim && n.trust !== 'demo')
-    .filter(n => tokenize([n.title, n.entities, n.body, n.triggers].join(' ')).filter(w => rare.has(w)).length >= 2);
+    .filter(n => rareHits(n, rare) >= MIN_RARE_HITS); // same note-side gate as retrieve.mjs, same code
   const guidanceTop = adaptiveCut(passing.filter(n => n.polarity !== 'pitfall'), k);
   const pitfallTop = adaptiveCut(passing.filter(n => n.polarity === 'pitfall'), k);
   if (!guidanceTop.length && !pitfallTop.length) {
@@ -107,6 +107,23 @@ try {
   const budget = Math.min(CONFIG.max_inject_chars, 6000);
   let out = 'Vault notes matching this prompt (cross-repo knowledge; verify against current code):\n';
   const injected = [];
+  // PROGRESSIVE DISCLOSURE of the link graph, and ONLY on this path. consolidate.mjs builds the
+  // graph and until now nothing has ever read it back. We surface it as a one-line pointer under
+  // each note we have ALREADY decided to inject: titles and the reason for the edge, never a
+  // neighbour's body. That cannot change WHETHER we inject (the rare-term gate above already
+  // decided that), so it cannot move the false-positive count, which is the number that matters.
+  //
+  // Why not retrieve.mjs as well: session start injects on a git-derived query and its notes are
+  // chosen from a much weaker signal than a real prompt. A pointer hung off a note that is only
+  // loosely relevant does not help the model reach a better note, it advertises a second loosely
+  // relevant one. Neighbours are only worth showing where the note earned its slot against the
+  // user's actual words.
+  //
+  // The exclude set is every candidate, not just the ones that survive the budget loop below: a
+  // candidate dropped for space is one we would rather not advertise as "related" either, and
+  // computing the set up front keeps the pointer text independent of budget arithmetic.
+  const candidates = [...guidanceTop, ...pitfallTop];
+  const nbrs = linkNeighbours(db, candidates, new Set([...seen, ...candidates.map(n => n.id)]));
   // redirected_from: this slot was won by a note the arbiter has since superseded; we served
   // the replacement instead. Said out loud because the agent may have seen the old note before.
   // A bare `superseded` flag only survives when the winner is gone (resolveSupersessions kept
@@ -117,14 +134,14 @@ try {
         : n.redirected_from ? ` [replaces ${n.redirected_from}, which is now superseded]`
           : '';
   for (const n of guidanceTop) {
-    const block = `\n## ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;
+    const block = `\n## ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n${relatedLine(nbrs.get(n.id))}`;
     if (out.length + block.length > budget && injected.length) break;
     out += block;
     injected.push(n);
   }
   let pitfallHeader = '\nKnown pitfalls, do NOT repeat:\n';
   for (const n of pitfallTop) {
-    const block = `\n## AVOID: ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files})\n${n.body}\n`;
+    const block = `\n## AVOID: ${n.title}${flagOf(n)}\n(repos: ${n.repos} · files: ${n.files})\n${n.body}\n${relatedLine(nbrs.get(n.id))}`;
     if (out.length + pitfallHeader.length + block.length > budget && injected.length) break;
     if (pitfallHeader) { out += pitfallHeader; pitfallHeader = ''; }
     out += block;

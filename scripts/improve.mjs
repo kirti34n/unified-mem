@@ -10,7 +10,30 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { ROOT, VAULT, CONFIG_PATH, loadConfig } from './vault.mjs';
-import { runEval, defaultQuestionFile } from '../eval/run.mjs';
+import { runEval as paidRunEval, defaultQuestionFile } from '../eval/run.mjs';
+
+// improve.mjs is the ONE script no test can run, because every iteration spends real money on
+// `claude -p`. That is not a footnote, it is why a ReferenceError sat in its accept path
+// undetected: `accepted` was used three times and declared nowhere, so an accepted knob threw,
+// the surrounding try swallowed it as "eval failed" and rolled the knob back, and the final
+// summary then threw again, uncaught. The loop had never once accepted a knob.
+//
+// UNIFIED_MEM_FAKE_EVAL=1 swaps the paid evaluator for a deterministic synthetic one, so the whole
+// loop (baseline, hypothesis, accept, revert, config rollback, final summary) executes end to end
+// for zero dollars and can be exercised by smoke.mjs. The real path is untouched: without the env
+// var this is literally the same function it always was. The synthetic scores are rigged so the
+// first hypothesis ACCEPTS and the second REVERTS, because a fake eval that only ever exercises
+// the happy path would be the same kind of test that cannot fail.
+const FAKE_EVAL = process.env.UNIFIED_MEM_FAKE_EVAL === '1';
+let fakeCall = 0;
+const runEval = FAKE_EVAL
+  ? () => {
+    const n = fakeCall++;
+    // call 0 = baseline, 1 = a clear win (accept), 2+ = worse (revert)
+    const correct_rate = n === 0 ? 0.70 : n === 1 ? 0.90 : 0.50;
+    return { summary: { A: { n: 18, correct_rate, median_chars: 500, median_ms: 1000 } }, rows: [] };
+  }
+  : paidRunEval;
 
 const argv = process.argv.slice(2);
 const opt = (f, d) => argv.includes(f) ? argv[argv.indexOf(f) + 1] : d;
@@ -99,6 +122,12 @@ if (best.summary.A.n < 14) {
   process.exit(1);
 }
 let bestScore = scoreOf(best.summary);
+// Knobs this run accepted, so the final summary can name them. It was USED in three places and
+// DECLARED in none, which made the accept path throw a ReferenceError that the surrounding try
+// swallowed as "eval failed" (rolling the knob back), and then throw again, uncaught, in the final
+// summary. The loop had therefore never successfully accepted a knob in its life. Nothing caught it
+// because improve.mjs makes paid `claude -p` calls, so it is the one script never run in a test.
+const accepted = [];
 console.log(`baseline: correct ${(best.summary.A.correct_rate * 100).toFixed(0)}% · ${best.summary.A.median_chars}ch · ${best.summary.A.median_ms}ms · score ${bestScore.toFixed(1)}`);
 log({ ts: new Date().toISOString(), phase: 'baseline', summary: best.summary, score: bestScore });
 

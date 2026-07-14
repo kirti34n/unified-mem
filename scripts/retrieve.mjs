@@ -6,7 +6,7 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { basename, join, dirname } from 'node:path';
-import { openDb, scoreNotes, adaptiveCut, resolveSupersessions, tokenize, hookDebugLog, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
+import { openDb, scoreNotes, adaptiveCut, rarityGate, rareHits, MIN_RARE_HITS, resolveSupersessions, tokenize, hookDebugLog, loadConfig, CONFIG, CONFIG_PATH, ROOT, VAULT } from './vault.mjs';
 
 const MAX_CHARS = CONFIG.max_inject_chars; // ≈2,500 tokens (PLAN §4.2)
 
@@ -111,7 +111,9 @@ try {
   // that is not a git repo and is named in no note) still injects 5 notes, the full k, with rank 1
   // won on ONE generic shared token. So one shared token IS enough, and session start does NOT
   // abstain on a weak query. The per-prompt path (retrieve-prompt.mjs) is the one with a real
-  // precision gate (>=2 rare terms shared with the note); this path has none (see docs/ROADMAP.md).
+  // precision gate (>=2 rare terms shared with the note). This path now has the SAME one, imported
+  // from vault.mjs (rarityGate) rather than copied, because a second copy of the rule is precisely
+  // how this path came to have none. See the pool below.
   // q>=0.7 is not proof of usefulness either: Q is a slow prior nudged by a reward that
   // detectOutcome regex-reads off the transcript tail, and it resolves on roughly 15% of sessions.
   // demo-seeded notes never ride the utility bypass into real sessions
@@ -127,7 +129,32 @@ try {
   // adjacent drop about 0.42). trim() is therefore an identity function as written (see
   // docs/ROADMAP.md: retire or fix adaptiveCut). The utility bypass (q>=0.7, sim below the floor)
   // is held out of the call regardless, so it always survives.
-  const passing = resolveSupersessions(db, scoreNotes(db, query))
+  // ABSTENTION, the thing this path never had. Measured before the gate existed: a cwd of
+  // "some-unknown-repo" (a directory that does not exist and is named in no note) still injected
+  // the full k=5 notes, rank 1 won on ONE generic shared token, because a normalized-BM25 floor
+  // cannot reject rank 1. Across 4 such probe repos this path injected 17 notes about nothing.
+  // The gate is a rare-term HIT COUNT, never a coverage ratio: the query here is git-derived and
+  // runs to hundreds of terms, so a ratio collapses to ~0.01 and abstains everywhere, which is
+  // what took a real repo to zero recall the last time this was attempted (see vault.mjs).
+  // The catalog, the repo card and pinned preferences are printed above regardless: cold-start
+  // orientation is not a retrieval guess and must not be gated away.
+  const { rare } = rarityGate(db, query);
+  // OVER-FETCH, then filter, then slice. scoreNotes used to be called at the default k, so it
+  // truncated to 5 BEFORE any filter below ran, and every note a filter rejected was a permanently
+  // empty slot with its replacement sitting unreachable at rank 6 to 10, within a few percent of
+  // rank 5. Over-fetching is free, not merely cheap: scoreNotes already does SELECT * FROM notes
+  // and sorts every row, so k only chooses where to cut the sorted array.
+  // It REFILLS slots the gate empties. It never adds slots: the pool is cut back to CONFIG.k below,
+  // in pure score order, because the measured defect in this system is precision and a bigger
+  // injected set makes it worse.
+  // + seen.size: on a resume/compact re-fire the dedupe below drops notes already injected this
+  // session, so the pool has to stay deep enough to still hold k live candidates underneath them.
+  // q>=0.7 (next line) stays a bypass of the SIMILARITY floor only, never of the rarity gate. Q is
+  // a slow prior nudged by a regex reward that resolves on roughly 15% of sessions, so it is
+  // evidence of past usefulness SOMEWHERE, never of relevance HERE: a proven docloom note has no
+  // business being injected into ComfyUI.
+  const passing = (rare.size < MIN_RARE_HITS ? [] : resolveSupersessions(db, scoreNotes(db, query, CONFIG.k * 4 + seen.size)))
+    .filter(n => rareHits(n, rare) >= MIN_RARE_HITS)
     .filter(n => n.trust !== 'demo' && (n.sim >= CONFIG.start_min_sim || n.q_value >= 0.7) && !seen.has(n.id) && n.type !== 'preference');
   const trim = notes => {
     const simMatched = notes.filter(n => n.sim >= CONFIG.start_min_sim);
@@ -142,8 +169,14 @@ try {
       : n.status === 'superseded' ? ' [SUPERSEDED, its replacement is gone; verify before use]'
         : n.redirected_from ? ` [replaces ${n.redirected_from}, which is now superseded]`
           : '';
-  const guidance = trim(passing.filter(n => n.polarity !== 'pitfall'));
-  const pitfalls = trim(passing.filter(n => n.polarity === 'pitfall'));
+  // Cut the over-fetched pool back to CONFIG.k in PURE SCORE ORDER, before the polarity split, so
+  // total injected volume is exactly what it was. No reserved pitfall lane: reserving floor(k/2)
+  // slots for pitfalls drawn from the deep pool was measured, and it pulled 14 of 53 injected notes
+  // from outside the old top-5 (one as deep as rank 18 of 55), displacing higher-scoring notes to
+  // fix a crowding-out problem that only the deep pool itself creates.
+  const top = passing.slice(0, CONFIG.k);
+  const guidance = trim(top.filter(n => n.polarity !== 'pitfall'));
+  const pitfalls = trim(top.filter(n => n.polarity === 'pitfall'));
   if (guidance.length) out += '\nMost relevant notes for this repo right now:\n';
   for (const n of guidance) {
     const block = `\n## ${n.title}${flagOf(n)}\n(type: ${n.type} · repos: ${n.repos} · files: ${n.files} · commit: ${n.source_commit})\n${n.body}\n`;

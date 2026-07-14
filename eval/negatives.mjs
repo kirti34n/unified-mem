@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../scripts/vault.mjs';
+import { openDb, rarityGate, rareHits, tokenize } from '../scripts/vault.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERBOSE = process.argv.includes('--verbose');
@@ -55,7 +55,18 @@ const db = openDb();
 // not repo Y", which no single-cwd probe can see. The unknown names catch an unfamiliar-repo leak.
 const known = db.prepare("SELECT DISTINCT repos FROM notes WHERE status != 'archived' AND repos != ''")
   .all().flatMap(r => r.repos.split(',').map(s => s.trim())).filter(Boolean);
-const REPOS = [...new Set([...known, 'some-unknown-repo', 'notes-app'])].slice(0, 16);
+// Repos the vault holds no note about. They are what let the session-start arm below actually FAIL,
+// which is this file own standard: a green tick that cannot go red is worse than no tick. Verified
+// against the live vault: with the session-start gate removed, retrieve.mjs injects 5 notes into
+// EACH of these (10 in total) and this eval exits 1. It does that because ftsSim normalizes BM25
+// against the BEST hit, so one generic shared token makes rank 1 score sim = 1.0 and sail straight
+// over start_min_sim.
+const UNKNOWN = ['some-unknown-repo', 'notes-app'];
+// UNKNOWN goes FIRST so a vault with many repos can never truncate the probes away: the cap bounds
+// runtime, and it used to sit at roughly the current repo count, one new repo away from silently
+// dropping an unknown probe out of the prompt arm and quietly weakening this eval. The probe SET is
+// unchanged from before (same repos, same 280 negative probes); only the order is.
+const REPOS = [...new Set([...UNKNOWN, ...known])].slice(0, 20);
 
 // The positive arm is derived from the vault's own notes: query each note with its own title and
 // require that SOMETHING comes back. This is deliberately NOT a quality claim (grading notes with
@@ -90,7 +101,47 @@ for (const t of titles) {
   else misses.push(t);
 }
 
+// SESSION-START ARM. Everything above drives retrieve-prompt.mjs, and for a long time that was the
+// only injection surface anyone measured. The OTHER one, retrieve.mjs, shipped with no precision
+// gate at all and injected the full k into ANY directory, including one that does not exist and is
+// named in no note. The prompt arm is structurally blind to that: this hook is driven by the cwd,
+// not by a prompt, so no off-topic prompt can ever provoke it.
+// Count NOTE BLOCKS, not stdout emptiness. This hook always prints a header, the memory catalog and
+// pinned preferences even when it retrieves nothing, and that is correct: cold-start orientation is
+// not a retrieval guess and must not be gated away. Only "## " blocks are retrieved notes.
+const startNotes = repo => {
+  const out = spawnSync(process.execPath, [join(ROOT, 'scripts', 'retrieve.mjs')], {
+    input: JSON.stringify({ session_id: `neg-start-${Math.random()}`, cwd: cwdFor(repo), source: 'startup' }),
+    encoding: 'utf8',
+    // NO_CAPTURE also suppresses repo auto-registration, so probing a fake repo cannot write it into
+    // the user's config.json or mint a repo card for it.
+    env: { ...process.env, UNIFIED_MEM_NO_CAPTURE: '1' },
+  }).stdout || '';
+  return (out.match(/^## /gm) || []).length;
+};
+const startFp = UNKNOWN.reduce((n, r) => n + startNotes(r), 0);
+// Both halves or neither. "Abstain on every repo" scores a perfect zero above, so a repo the vault
+// DOES know must still retrieve. That is the regression this has to keep catching: an earlier
+// session-start gate scored a coverage RATIO instead of a rare-term hit count, and because the
+// git-derived query runs to hundreds of terms the ratio collapsed and took a real repo to zero.
+//
+// The probe repo is chosen by EVIDENCE, not by array order, and getting that predicate right IS the
+// test. These probe paths are not git repos, so the ENTIRE session-start query is the folder NAME
+// (in a real session it is the name plus branch, commit subjects and changed files). So the arm may
+// only demand a hit from a repo whose name the vault can actually ANSWER: some note must hold >= 2
+// of the rare terms that name yields. A repo whose name yields fewer is not a failing gate, it is a
+// folder name that is not evidence, and demanding a hit there would make a CORRECT build go red.
+const answerable = db.prepare("SELECT title,entities,body,triggers FROM notes WHERE status != 'archived' AND trust != 'demo'").all();
+const startProbe = [...new Set(known)]
+  .map(r => { const { rare } = rarityGate(db, tokenize(r)); return { repo: r, rare, can: rare.size >= 2 && answerable.some(n => rareHits(n, rare) >= 2) }; })
+  .sort((a, b) => (b.can - a.can) || (b.rare.size - a.rare.size))[0];
+const startConclusive = !!startProbe?.can;
+const startHits = startConclusive ? startNotes(startProbe.repo) : 0;
+
 console.log(`negatives: ${fp}/${negTotal} false positives (${(100 * fp / negTotal).toFixed(1)}%)  [target 0]`);
+console.log(startConclusive
+  ? `session-start: ${startFp} notes into ${UNKNOWN.length} unknown repos [target 0], ${startHits} into "${startProbe.repo}" [target >=1]`
+  : `session-start: ${startFp} notes into ${UNKNOWN.length} unknown repos [target 0]; POSITIVE ARM INCONCLUSIVE (no known repo name carries 2 rare terms, so the probe query is too weak to demand a hit)`);
 console.log(titles.length
   ? `positives: ${hits}/${titles.length} notes retrievable by their own title   [target ${titles.length}]`
   : 'positives: NO ELIGIBLE NOTES: this vault cannot retrieve anything, so the negative arm proves nothing');
@@ -110,6 +161,11 @@ if (leaks.size && [...leaks.values()].some(n => n < REPOS.length))
 // with the cwd-in-query bug deliberately put back, an empty vault STILL reports zero false positives
 // and exits 0. A green tick that cannot go red is worse than no tick, because it is trusted. Refuse
 // to score a vault that has nothing to retrieve.
-const ok = fp === 0 && titles.length > 0 && hits === titles.length;
+// startFp is a hard gate on every vault. The session-start POSITIVE arm is only demanded when the
+// probe query can actually carry evidence (startConclusive), so CI keeps the "abstain on
+// everything" degenerate solution failing loudly, while a vault whose repo names happen to be short
+// reports itself inconclusive instead of fabricating a verdict.
+const ok = fp === 0 && titles.length > 0 && hits === titles.length
+  && startFp === 0 && (!startConclusive || startHits > 0);
 console.log(ok ? '\nRETRIEVAL OK' : '\nRETRIEVAL REGRESSION');
 process.exit(ok ? 0 : 1);

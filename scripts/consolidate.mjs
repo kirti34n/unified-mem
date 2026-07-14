@@ -389,12 +389,17 @@ ${textB}`;
 // Idempotent; at most 4 links per note so hubs, not notes, carry high fan-out.
 {
   const act = db.prepare("SELECT id,files,entities,links FROM notes WHERE status != 'archived'").all();
+  // Every id the vault knows, ARCHIVED INCLUDED. reindexNotes ran at the top of this file, so the
+  // table is authoritative and a note whose file is gone is already deleted from it. An edge into
+  // the archive is still a TRUE edge (the file is on disk, Obsidian follows it, retrieval drops it
+  // on its own); an edge into NOTHING is not, and that is what the prune below removes.
+  const knownIds = new Set(db.prepare('SELECT id FROM notes').all().map(r => r.id));
   const fileMap = {}, entMap = {};
   for (const n of act) {
     (n.files || '').split(',').map(s => s.trim()).filter(Boolean).forEach(f => (fileMap[f] ??= []).push(n.id));
     (n.entities || '').split(',').map(s => s.trim()).filter(Boolean).forEach(e => (entMap[e] ??= []).push(n.id));
   }
-  let autolinks = 0;
+  let autolinks = 0, pruned = 0;
   for (const n of act) {
     const rel = new Set();
     (n.files || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -403,15 +408,25 @@ ${textB}`;
     (n.entities || '').split(',').map(s => s.trim()).filter(Boolean)
       .forEach(e => (entMap[e] || []).forEach(id => { if (id !== n.id) shared[id] = (shared[id] || 0) + 1; }));
     Object.entries(shared).filter(([, c]) => c >= 2).forEach(([id]) => rel.add(id));
-    const existing = new Set((n.links || '').split(',').map(s => s.replace(/[\[\]"']/g, '').trim()).filter(Boolean));
+    // PRUNE, then add. This block only ever APPENDED, so a dead edge was permanent. And dead edges
+    // exist: `links` is not written only here. The reflector emits ids of its own and gets them
+    // wrong: 3 of the 12 hand-written edges in the live vault point at ids that are not notes (two
+    // dropped the date prefix, one is a concept phrase). They are not merely cosmetic, they are
+    // charged against the 4-link budget on the next line, so a note can fill up on edges that
+    // resolve to nothing and never earn a real one. And now that a retrieval path READS this column
+    // (linkNeighbours, surfaced by retrieve-prompt.mjs), it has to be true, not decorative.
+    const raw = (n.links || '').split(',').map(s => s.replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+    const existing = new Set(raw.filter(id => id !== n.id && knownIds.has(id)));
     const add = [...rel].filter(id => !existing.has(id)).slice(0, Math.max(0, 4 - existing.size));
-    if (!add.length) continue;
+    if (!add.length && existing.size === raw.length) continue; // nothing to add and nothing dead to prune
     const all = [...existing, ...add];
     updateNoteFile(db, n.id, { links: `[${all.map(id => `"[[${id}]]"`).join(', ')}]` });
     autolinks += add.length;
+    pruned += raw.length - existing.size;
   }
-  if (autolinks) log.run(ts, 'autolink', null, `Added ${autolinks} wikilinks (co-file and shared-entity edges)`, null);
+  if (autolinks || pruned) log.run(ts, 'autolink', null, `Added ${autolinks} wikilinks (co-file and shared-entity edges); pruned ${pruned} that pointed at no note`, null);
   counts.autolink = autolinks;
+  counts.pruned = pruned;
 }
 
 // ENTITY HUBS (R8): regenerate entities/*.md so shared concepts have Obsidian hub pages
@@ -524,4 +539,4 @@ if (prefCount > CONFIG.preference_cap)
   console.warn(`PREFERENCE CAP: ${prefCount} active preferences > ${CONFIG.preference_cap}; every one is pinned into every session, prune with intent`);
 
 reindexNotes(db);
-console.log(`consolidated: ${counts.invalidate} invalidated · ${counts.verify || 0} verified-restored · ${counts.decay} decayed · ${counts.archive} archived · ${counts.dedupe} dedupe-candidates · ${counts.arbiter || 0} pair-verdicts · ${counts.supersede || 0} superseded · ${counts.autolink || 0} autolinks · ${hubs} entity hubs · ${cards} repo cards · vault ${active}a/${review}r/${superseded}s/${archived}x`);
+console.log(`consolidated: ${counts.invalidate} invalidated · ${counts.verify || 0} verified-restored · ${counts.decay} decayed · ${counts.archive} archived · ${counts.dedupe} dedupe-candidates · ${counts.arbiter || 0} pair-verdicts · ${counts.supersede || 0} superseded · ${counts.autolink || 0} autolinks · ${counts.pruned || 0} dead links pruned · ${hubs} entity hubs · ${cards} repo cards · vault ${active}a/${review}r/${superseded}s/${archived}x`);
