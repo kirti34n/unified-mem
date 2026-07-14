@@ -484,6 +484,85 @@ test('scoreNotes: returns raw components (sim, recency, validity) for injection 
   assert.equal(typeof top.validity, 'number');
 });
 
+// --- ranking properties -------------------------------------------------------------------
+// The score is 0.40*sim + 0.30*q + 0.15*recency + 0.15*validity, and it is the whole product:
+// it decides what a session sees. Until now not one of those four terms had a test proving it
+// actually moves rank, so any of them could have been silently inert (adaptiveCut WAS inert for
+// months, and the similarity floor still is, precisely because nothing pinned their behavior).
+// These fixtures are deliberately built so exactly one variable differs at a time.
+const rank = (q, k = 12) => scoreNotes(db, tokenize(q), k).map(n => n.id);
+const twin = (id, extra, body) =>
+  `---\nid: ${id}\ntype: recovery\ntitle: twinsubject calibration routine\nentities: [twinsubject]\nrepos: [demo]\nfiles: [t.ts]\nsource_commit: abc\nconfidence: med\n${extra}links: []\n---\n${body ?? 'Body about the twinsubject calibration routine.'}\n`;
+
+test('scoreNotes: IDF, a note matching the RARE query term outranks notes matching the COMMON one', () => {
+  // Nine notes carry the common term, one carries the rare term. The query asks for both. If IDF
+  // were not working, the nine (which also match) could crowd out the one, and a query's most
+  // discriminating word would be worth no more than its most generic one.
+  for (let i = 0; i < 9; i++)
+    writeFileSync(join(noteDir, `2026-03-0${i}-common.md`),
+      `---\nid: 2026-03-0${i}-common\ntype: recovery\ntitle: widgetcommon handling number ${i}\nentities: [widgetcommon]\nrepos: [demo]\nfiles: [w.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nA note about widgetcommon handling.\n`);
+  writeFileSync(join(noteDir, '2026-03-09-rare.md'),
+    '---\nid: 2026-03-09-rare\ntype: recovery\ntitle: zorptastic failure mode\nentities: [zorptastic]\nrepos: [demo]\nfiles: [z.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nA note about the zorptastic failure mode.\n');
+  reindexNotes(db);
+  const order = rank('widgetcommon zorptastic');
+  assert.equal(order[0], '2026-03-09-rare', 'the rare-term match must outrank all nine common-term matches');
+});
+
+test('scoreNotes: utility (q_value) actually moves rank when relevance ties', () => {
+  writeFileSync(join(noteDir, '2026-03-10-lowq.md'), twin('2026-03-10-lowq', 'q_value: 0.20\nstatus: active\nlast_used: 2026-01-20\n'));
+  writeFileSync(join(noteDir, '2026-03-10-highq.md'), twin('2026-03-10-highq', 'q_value: 0.90\nstatus: active\nlast_used: 2026-01-20\n'));
+  reindexNotes(db);
+  const order = rank('twinsubject calibration routine').filter(id => id.startsWith('2026-03-10'));
+  assert.deepEqual(order, ['2026-03-10-highq', '2026-03-10-lowq'],
+    'two notes identical in text and age must be ordered by learned usefulness: this is the utility half of "similarity x utility"');
+});
+
+test('scoreNotes: validity actually moves rank, active > needs-review > superseded', () => {
+  writeFileSync(join(noteDir, '2026-03-11-act.md'), twin('2026-03-11-act', 'q_value: 0.50\nstatus: active\nlast_used: 2026-01-21\n'));
+  writeFileSync(join(noteDir, '2026-03-11-rev.md'), twin('2026-03-11-rev', 'q_value: 0.50\nstatus: needs-review\nlast_used: 2026-01-21\n'));
+  writeFileSync(join(noteDir, '2026-03-11-sup.md'), twin('2026-03-11-sup', 'q_value: 0.50\nstatus: superseded\nsuperseded_by: 2026-03-11-act\nlast_used: 2026-01-21\n'));
+  reindexNotes(db);
+  const order = rank('twinsubject calibration routine').filter(id => id.startsWith('2026-03-11'));
+  assert.deepEqual(order, ['2026-03-11-act', '2026-03-11-rev', '2026-03-11-sup'],
+    'a note whose code changed, and one the arbiter retired, must rank below a live one');
+});
+
+test('scoreNotes: recency actually moves rank when everything else ties', () => {
+  writeFileSync(join(noteDir, '2026-03-12-old.md'), twin('2026-03-12-old', 'q_value: 0.50\nstatus: active\nlast_used: 2025-06-01\n'));
+  writeFileSync(join(noteDir, '2026-03-12-new.md'), twin('2026-03-12-new', 'q_value: 0.50\nstatus: active\nlast_used: 2026-03-12\n'));
+  reindexNotes(db);
+  const order = rank('twinsubject calibration routine').filter(id => id.startsWith('2026-03-12'));
+  assert.deepEqual(order, ['2026-03-12-new', '2026-03-12-old']);
+});
+
+// This pins a LIMITATION, on purpose. ftsSim normalizes BM25 against the best hit in the result
+// set, so the top match always scores exactly 1.0 no matter how weak its absolute match is. That
+// is why start_min_sim / prompt_min_sim cannot reject rank 1 and only ever trim the tail, and why
+// the rarity gate (not the floor) is what makes retrieval abstain. MECHANISMS.md says all of this
+// in prose. If someone later changes the normalization, this test fails and forces the docs to be
+// updated with it, rather than leaving the repo describing a floor that has started working.
+test('scoreNotes: the top hit always scores sim 1.0, so a similarity floor cannot reject it', () => {
+  if (!FTS5_OK) return; // the keyword fallback scores absolutely, so the property does not apply
+  writeFileSync(join(noteDir, '2026-03-13-weak.md'),
+    '---\nid: 2026-03-13-weak\ntype: recovery\ntitle: quibblewrench alignment\nentities: [quibblewrench]\nrepos: [demo]\nfiles: [q.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nA note about quibblewrench alignment.\n');
+  reindexNotes(db);
+  // a query that shares exactly ONE token with this note and is otherwise nonsense
+  const [top] = scoreNotes(db, tokenize('quibblewrench zzz nonsense gibberish unrelated'), 1);
+  assert.equal(top.id, '2026-03-13-weak');
+  assert.equal(top.sim, 1, 'the best hit is normalized to 1.0 by construction, however weak the match');
+});
+
+test('scoreNotes: keyword fallback (no FTS5) still ranks a relevant note above an unrelated one', () => {
+  // The fallback path is what runs on the Node 22.13 floor, where the bundled SQLite has no FTS5.
+  // It is a different scorer, so it needs its own proof that it ranks at all.
+  writeFileSync(join(noteDir, '2026-03-14-fallback.md'),
+    '---\nid: 2026-03-14-fallback\ntype: recovery\ntitle: grommetflange seizes under vibration\nentities: [grommetflange]\nrepos: [demo]\nfiles: [g.ts]\nsource_commit: abc\nconfidence: med\nq_value: 0.50\nstatus: active\nlinks: []\n---\nThe grommetflange seizes under sustained vibration.\n');
+  reindexNotes(db);
+  const scored = scoreNotes(db, tokenize('grommetflange seizes vibration'), 20);
+  assert.equal(scored[0].id, '2026-03-14-fallback');
+  assert.ok(scored[0].sim > 0, 'a real match must carry positive similarity on either scorer');
+});
+
 // --- supersede redirect -------------------------------------------------------------
 // A superseded note is usually the STRONGEST lexical match for the query that surfaces it
 // (it was written about exactly that symptom), so demoting its validity provably cannot
