@@ -1,4 +1,4 @@
-<svg viewBox="0 0 940 566" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="unified-mem architecture: a Claude Code session reads memory from and queues its transcript into a central vault; a background worker distills and scores notes, and a nightly job maintains them, forming a closed learning loop.">
+<svg viewBox="0 0 960 664" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="unified-mem architecture. A Claude Code session in any repo reads memory on the SessionStart and UserPromptSubmit hooks and queues its transcript on SessionEnd and PreCompact. The read path abstains by default: a prompt with no rare technical vocabulary injects nothing, and a superseded note keeps its retrieval slot but serves the content of the note that replaced it. worker.mjs builds two projections of each transcript from one read, an enriched one carrying the commands and edit hunks that goes to the reflector, and a lean one that is byte-frozen because it feeds the reward. consolidate.mjs maintains the vault nightly with git-diff invalidation, two-strike verification, decay, and a duplicate arbiter whose verdict is executed as a supersede. A free deterministic eval and a paid A/B eval measure the loop. Every step is observable on the dashboard at localhost 7777.">
   <style>
     :root{
       --ink:#1f2328; --muted:#656d76; --line:#d0d7de; --panel:#ffffff; --sub:#f6f8fa;
@@ -11,14 +11,15 @@
     .panel{ fill:var(--panel); stroke:var(--line); stroke-width:1.25; }
     .sub{ fill:var(--sub); stroke:var(--line); stroke-width:1; }
     .mono{ font-family:ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace; }
-    .t-title{ font-size:15px; font-weight:700; letter-spacing:.2px; }
     .t-vault{ font-size:17px; font-weight:800; letter-spacing:1.5px; }
+    .t-title{ font-size:15px; font-weight:700; letter-spacing:.2px; }
     .t-lbl{ font-size:12px; }
     .t-code{ font-size:11.5px; }
     .t-arrow{ font-size:11px; font-weight:600; }
-    .t-eyebrow{ font-size:10px; font-weight:700; letter-spacing:1.5px; }
-    .green{ fill:#2da44e; } .amber{ fill:#bf8700; }
-    .s-green{ stroke:#2da44e; } .s-amber{ stroke:#bf8700; } .s-grey{ stroke:#768390; }
+    .t-eyebrow{ font-size:10px; font-weight:700; letter-spacing:1.4px; }
+    .t-note{ font-size:10.5px; }
+    .green{ fill:#2da44e; } .amber{ fill:#bf8700; } .blue{ fill:#0969da; }
+    .s-green{ stroke:#2da44e; } .s-amber{ stroke:#bf8700; } .s-grey{ stroke:#768390; } .s-blue{ stroke:#0969da; }
     .flow{ fill:none; stroke-width:2; }
   </style>
   <defs>
@@ -28,72 +29,80 @@
   </defs>
 
   <!-- SESSION -->
-  <g>
-    <rect class="panel" x="250" y="24" width="440" height="92" rx="12"/>
-    <text class="ink t-title" x="272" y="52">Claude Code session <tspan class="muted" font-weight="400" font-size="12px">· any repo, any machine</tspan></text>
-    <text class="ink t-lbl" x="272" y="76"><tspan class="mono t-code green" font-weight="700">SessionStart · UserPromptSubmit</tspan> read memory into context</text>
-    <text class="ink t-lbl" x="272" y="98"><tspan class="mono t-code" font-weight="700">SessionEnd · PreCompact</tspan> queue the transcript</text>
-  </g>
+  <rect class="panel" x="262" y="20" width="446" height="92" rx="12"/>
+  <text class="ink t-title" x="284" y="48">Claude Code session <tspan class="muted" font-weight="400" font-size="12px">· any repo, any machine</tspan></text>
+  <text class="ink t-lbl" x="284" y="72"><tspan class="mono t-code green" font-weight="700">SessionStart · UserPromptSubmit</tspan> read memory into context</text>
+  <text class="ink t-lbl" x="284" y="94"><tspan class="mono t-code" font-weight="700">SessionEnd · PreCompact</tspan> queue the transcript</text>
 
-  <!-- VAULT (hero) -->
-  <g>
-    <rect x="356" y="206" width="228" height="140" rx="14" fill="var(--panel)" stroke="#2da44e" stroke-width="2"/>
-    <text class="ink t-vault" x="470" y="238" text-anchor="middle">THE VAULT</text>
-    <text class="muted t-lbl" x="470" y="258" text-anchor="middle" class="muted t-lbl">a git repo you own</text>
-    <!-- mini note card -->
-    <rect class="sub" x="380" y="272" width="180" height="56" rx="7"/>
-    <line x1="392" y1="287" x2="470" y2="287" stroke="#2da44e" stroke-width="2.5" stroke-linecap="round"/>
-    <line x1="392" y1="300" x2="548" y2="300" stroke="var(--line)" stroke-width="2" stroke-linecap="round"/>
-    <line x1="392" y1="312" x2="520" y2="312" stroke="var(--line)" stroke-width="2" stroke-linecap="round"/>
-    <text class="muted mono" x="470" y="342" text-anchor="middle" font-size="10.5px">notes/*.md  +  SQLite FTS5 (BM25)</text>
-  </g>
+  <!-- INJECT: vault -> session (straight up the middle, kept clear of the queue curve) -->
+  <path class="flow s-green" d="M484,214 L484,116" marker-end="url(#ag)"/>
+  <text class="green t-arrow" x="496" y="152" text-anchor="start">inject</text>
+  <text class="muted mono t-note" x="496" y="168" text-anchor="start">retrieve.mjs</text>
+
+  <!-- READ PATH callout, to the right, connected to the inject arrow -->
+  <rect class="sub" x="600" y="136" width="330" height="74" rx="8" stroke-dasharray="3 3"/>
+  <text class="ink t-eyebrow" x="618" y="155">THE READ PATH ABSTAINS BY DEFAULT</text>
+  <text class="muted t-note" x="618" y="174">A prompt with no rare technical vocabulary injects</text>
+  <text class="muted t-note" x="618" y="188"><tspan class="ink" font-weight="700">nothing</tspan>. A superseded note keeps its slot, but serves</text>
+  <text class="muted t-note" x="618" y="202">the content of the note that <tspan class="blue" font-weight="700">replaced</tspan> it.</text>
+  <path class="flow s-grey" d="M600,172 L556,172" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <!-- VAULT -->
+  <rect x="370" y="214" width="228" height="142" rx="14" fill="var(--panel)" stroke="#2da44e" stroke-width="2"/>
+  <text class="ink t-vault" x="484" y="246" text-anchor="middle">THE VAULT</text>
+  <text class="muted t-lbl" x="484" y="266" text-anchor="middle">a git repo you own</text>
+  <rect class="sub" x="394" y="280" width="180" height="56" rx="7"/>
+  <line x1="406" y1="295" x2="484" y2="295" stroke="#2da44e" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="406" y1="308" x2="562" y2="308" stroke="var(--line)" stroke-width="2" stroke-linecap="round"/>
+  <line x1="406" y1="320" x2="534" y2="320" stroke="var(--line)" stroke-width="2" stroke-linecap="round"/>
+  <text class="muted mono t-note" x="484" y="350" text-anchor="middle">notes/*.md  +  SQLite FTS5 (BM25)</text>
+
+  <!-- QUEUE: session -> worker -->
+  <path class="flow s-grey" d="M300,112 C240,196 196,318 182,412" marker-end="url(#ak)"/>
+  <text class="ink t-arrow" x="146" y="248" text-anchor="middle" transform="rotate(-6 146 248)">queue transcript</text>
+  <text class="muted mono t-note" x="146" y="264" text-anchor="middle" transform="rotate(-6 146 264)">enqueue.mjs</text>
 
   <!-- WORKER -->
-  <g>
-    <rect class="panel" x="70" y="404" width="264" height="100" rx="12"/>
-    <text class="green t-eyebrow" x="90" y="428">WORKER</text>
-    <text class="ink t-title" x="90" y="450" font-size="14px" class="mono ink" >worker.mjs</text>
-    <text class="muted t-lbl" x="90" y="472">distill → score outcome → judge</text>
-    <text class="muted t-lbl" x="90" y="491"><tspan class="mono" font-size="11px">tests pass / build green</tspan> → earned Q</text>
-  </g>
+  <rect class="panel" x="30" y="412" width="322" height="140" rx="12"/>
+  <text class="green t-eyebrow" x="52" y="436">WORKER</text>
+  <text class="ink mono" x="52" y="458" font-size="14px" font-weight="700">worker.mjs</text>
+  <text class="ink t-lbl" x="52" y="482"><tspan class="mono t-code" font-weight="700">distill</tspan> <tspan class="muted">into 0-5 typed notes, with errors,</tspan></text>
+  <text class="muted t-lbl" x="52" y="498">flags and commands quoted verbatim</text>
+  <text class="ink t-lbl" x="52" y="520"><tspan class="mono t-code" font-weight="700">score</tspan> <tspan class="muted">each injected note against the outcome</tspan></text>
+  <text class="muted t-note" x="52" y="537">read from the transcript, on the minority of</text>
+  <text class="muted t-note" x="52" y="550">sessions that state one plainly</text>
+
+  <!-- TWO PROJECTIONS callout -->
+  <rect class="sub" x="30" y="568" width="322" height="62" rx="8" stroke-dasharray="3 3"/>
+  <text class="ink t-eyebrow" x="52" y="587">ONE READ, TWO PROJECTIONS</text>
+  <text class="muted t-note" x="52" y="605"><tspan class="mono ink" font-weight="700">.enriched</tspan> the commands and edits, to the reflector</text>
+  <text class="muted t-note" x="52" y="620"><tspan class="mono ink" font-weight="700">.lean</tspan> byte-frozen: it feeds the reward, so it cannot move</text>
+
+  <!-- LEARN: worker -> vault -->
+  <path class="flow s-green" d="M342,430 C388,406 390,384 398,356" marker-end="url(#ag)"/>
+  <text class="green t-arrow" x="368" y="406" text-anchor="start">new notes + Q</text>
 
   <!-- NIGHTLY -->
-  <g>
-    <rect class="panel" x="606" y="404" width="264" height="100" rx="12"/>
-    <text class="amber t-eyebrow" x="626" y="428">NIGHTLY</text>
-    <text class="ink mono" x="626" y="450" font-size="14px" font-weight="700">consolidate.mjs</text>
-    <text class="muted t-lbl" x="626" y="472">git-diff invalidate · verify · decay</text>
-    <text class="muted t-lbl" x="626" y="491">arbiter · auto-link · repo cards</text>
-  </g>
+  <rect class="panel" x="616" y="412" width="314" height="140" rx="12"/>
+  <text class="amber t-eyebrow" x="638" y="436">NIGHTLY</text>
+  <text class="ink mono" x="638" y="458" font-size="14px" font-weight="700">consolidate.mjs</text>
+  <text class="ink t-lbl" x="638" y="482"><tspan class="mono t-code" font-weight="700">invalidate</tspan> <tspan class="muted">notes whose files moved in git</tspan></text>
+  <text class="ink t-lbl" x="638" y="502"><tspan class="mono t-code" font-weight="700">verify</tspan> <tspan class="muted">against the code, two strikes to archive</tspan></text>
+  <text class="ink t-lbl" x="638" y="522"><tspan class="mono t-code" font-weight="700">decay</tspan> <tspan class="muted">notes that stop being used</tspan></text>
+  <text class="ink t-lbl" x="638" y="542"><tspan class="mono t-code" font-weight="700">arbiter</tspan> <tspan class="muted">duplicates, verdict is </tspan><tspan class="blue" font-weight="700">executed</tspan></text>
 
-  <!-- FLOWS -->
-  <!-- inject: vault -> session (up) -->
-  <path class="flow s-green" d="M424,206 L424,120" marker-end="url(#ag)"/>
-  <text class="green t-arrow" x="414" y="150" text-anchor="end">inject</text>
-  <text class="muted" x="414" y="166" text-anchor="end" font-size="10px">retrieve.mjs · retrieve-prompt.mjs</text>
-  <text class="muted" x="414" y="180" text-anchor="end" font-size="10px">situation-keyed, pitfalls flagged</text>
+  <!-- MAINTAIN: nightly -> vault -->
+  <path class="flow s-amber" d="M624,430 C578,406 576,384 568,356" marker-end="url(#aa)"/>
+  <text class="amber t-arrow" x="598" y="406" text-anchor="end">verify · decay</text>
 
-  <!-- queue: session -> worker (down-left) -->
-  <path class="flow s-grey" d="M300,116 C250,190 205,300 200,404" marker-end="url(#ak)"/>
-  <text class="ink t-arrow" x="150" y="250" text-anchor="middle" transform="rotate(-4 150 250)">queue transcript</text>
-  <text class="muted mono" x="150" y="266" text-anchor="middle" font-size="10px" transform="rotate(-4 150 266)">enqueue.mjs</text>
+  <!-- EVAL -->
+  <rect class="sub" x="616" y="568" width="314" height="62" rx="8" stroke-dasharray="3 3"/>
+  <text class="ink t-eyebrow" x="638" y="587">MEASURED, NOT ASSERTED</text>
+  <text class="muted t-note" x="638" y="605"><tspan class="mono ink" font-weight="700">negatives.mjs</tspan> free: does memory stay quiet when it should?</text>
+  <text class="muted t-note" x="638" y="620"><tspan class="mono ink" font-weight="700">run.mjs</tspan> A/B, same repo access, memory off in the control</text>
 
-  <!-- learn: worker -> vault (up-right) -->
-  <path class="flow s-green" d="M320,404 C368,378 372,366 384,344" marker-end="url(#ag)"/>
-  <text class="green t-arrow" x="360" y="392" text-anchor="start">new notes + Q</text>
-
-  <!-- maintain: nightly -> vault (up-left) -->
-  <path class="flow s-amber" d="M620,404 C572,378 568,366 556,344" marker-end="url(#aa)"/>
-  <text class="amber t-arrow" x="582" y="392" text-anchor="end">verify · decay</text>
-
-  <!-- config tuned annotation -->
-  <path class="flow s-grey" d="M690,150 C740,180 748,230 620,268" marker-end="url(#ak)" stroke-dasharray="4 4" stroke-width="1.5"/>
-  <text class="muted" x="742" y="150" text-anchor="start" font-size="10px">eval + improve.mjs</text>
-  <text class="muted" x="742" y="164" text-anchor="start" font-size="10px">tune-weights.mjs</text>
-  <text class="muted" x="742" y="178" text-anchor="start" font-size="10px" font-style="italic">fit the ranking weights</text>
-
-  <!-- footer: dashboard + value prop -->
-  <g transform="translate(300,542)">
+  <!-- FOOTER -->
+  <g transform="translate(296,654)">
     <rect x="0" y="-9" width="15" height="11" rx="1.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
     <line x1="7.5" y1="2" x2="7.5" y2="5" stroke="var(--muted)" stroke-width="1.3"/>
     <line x1="3.5" y1="5" x2="11.5" y2="5" stroke="var(--muted)" stroke-width="1.3"/>

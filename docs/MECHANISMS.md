@@ -11,7 +11,7 @@ Claude Code is not amnesiac. It ships with [built-in memory](https://code.claude
 | [Session transcripts](https://code.claude.com/docs/en/sessions) (`--resume`) | one conversation | full history | no | no |
 | [`CLAUDE.md` hierarchy](https://code.claude.com/docs/en/memory) | user / project | your instructions | no | manual |
 | [Auto-memory](https://code.claude.com/docs/en/memory) | one repository | project facts Claude saves | heuristic | none |
-| unified-mem | all repositories | durable, verified knowledge | Q-value from real outcomes | git-diff invalidation + re-verification |
+| unified-mem | all repositories | durable, verified knowledge | Q-value from session outcomes, where one can be read | git-diff invalidation + re-verification |
 
 Division of labor: project-local ephemera (task state, repo structure, short-lived plans) stays in the built-in layer. Durable, transferable knowledge (verified fixes, technology gotchas, patterns, conventions) is promoted into the unified vault. The reflector prompt enforces this split.
 
@@ -32,7 +32,8 @@ source_commit: 8f3ab21
 confidence: high
 polarity: guidance    # guidance | pitfall (pitfall notes render in a separate "do NOT repeat" block)
 q_value: 0.50         # learned usefulness: starts neutral, earned over time
-status: active        # active | needs-review | archived
+status: active        # active | needs-review | superseded | archived
+superseded_by: null   # set by the arbiter; retrieval serves that note's content in this one's slot
 links: ["[[2026-06-16-redis-lock-pattern]]"]
 ---
 **Problem:** ...  **Root cause:** ...  **Fix:** ... (commit)  **Gotchas:** ...

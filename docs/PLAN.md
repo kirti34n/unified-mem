@@ -138,7 +138,12 @@ GENERATE ──► REFLECT ──► CURATE ──► SCORE ──► CONSOLIDAT
 
 **Score update (R3, R5):**
 ```
-r = 1 verifiable success (tests pass / build green, no revert) · 0 verifiable failure · skip if indeterminate
+r = 1 success · 0 failure · skip if indeterminate
+    IMPLEMENTED as: read from the transcript, which must state the result plainly ("14 passed",
+    "build succeeded"). The vault does not invoke a test runner. The bar is deliberately high, so
+    most sessions are indeterminate and produce no update: a guessed reward is worse than none.
+    PLANNED: pair each tool_use with its tool_result and key r on the runner's own exit status,
+    which is the design this rule was written for and is not yet what the code does.
 c = contribution ∈ [0,1] from a cheap LLM judge
 Q ← clamp(Q + 0.3·c·(r − Q), 0.05, 0.95);  |ΔQ| ≤ 0.15 per session   # anti-gaming cap
 ```
